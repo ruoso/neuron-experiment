@@ -6,6 +6,7 @@ add_library(neuronlib
     flow_field.cpp
     dendrite.cpp
     brain.cpp
+    activation.cpp
 )
 
 target_include_directories(neuronlib PUBLIC
