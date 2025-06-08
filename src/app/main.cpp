@@ -23,6 +23,8 @@ using namespace neuronlib;
 
 constexpr int WINDOW_WIDTH = 800;
 constexpr int WINDOW_HEIGHT = 600;
+constexpr int VIZ_WINDOW_WIDTH = 900;
+constexpr int VIZ_WINDOW_HEIGHT = 900;
 constexpr int GRID_SIZE = 32;
 constexpr int CELL_SIZE = std::min(WINDOW_WIDTH, WINDOW_HEIGHT) / GRID_SIZE;
 constexpr int GRID_OFFSET_X = (WINDOW_WIDTH - GRID_SIZE * CELL_SIZE) / 2;
@@ -50,10 +52,16 @@ struct GridCell {
     }
 };
 
+struct IsometricPoint {
+    float x, y;
+};
+
 class NeuronExperimentApp {
 private:
     SDL_Window* window_;
     SDL_Renderer* renderer_;
+    SDL_Window* viz_window_;
+    SDL_Renderer* viz_renderer_;
     bool running_;
     
     // Grid state
@@ -68,21 +76,29 @@ private:
     std::atomic<bool> threads_running_;
     std::atomic<uint32_t> simulation_timestamp_;
     
+    // Visualization
+    std::vector<NeuronFiringEvent> recent_firings_;
+    std::mutex firing_mutex_;
+    
     // Timing
     std::chrono::steady_clock::time_point last_update_;
     
 public:
-    NeuronExperimentApp() : window_(nullptr), renderer_(nullptr), running_(false), 
-                           grid_(GRID_SIZE, std::vector<GridCell>(GRID_SIZE)),
-                           message_processor_(10),
-                           threads_running_(false),
-                           simulation_timestamp_(0) {
+    NeuronExperimentApp() : window_(nullptr), renderer_(nullptr), viz_window_(nullptr), viz_renderer_(nullptr),
+                           running_(false), grid_(GRID_SIZE, std::vector<GridCell>(GRID_SIZE)),
+                           message_processor_(10), threads_running_(false), simulation_timestamp_(0) {
         
         // Initialize logging
         initialize_logging();
         
         // Initialize neural network
         initialize_brain();
+        
+        // Set up firing callback
+        message_processor_.set_neuron_firing_callback([this](const NeuronFiringEvent& event) {
+            std::lock_guard<std::mutex> lock(firing_mutex_);
+            recent_firings_.push_back(event);
+        });
         
         // Initialize shard threads
         initialize_shard_threads();
@@ -131,23 +147,42 @@ public:
         }
         spdlog::debug("SDL initialized successfully");
         
-        window_ = SDL_CreateWindow("Neuron Experiment",
+        window_ = SDL_CreateWindow("Neuron Experiment - 2D Grid",
                                  SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
                                  WINDOW_WIDTH, WINDOW_HEIGHT,
                                  SDL_WINDOW_SHOWN);
         
         if (!window_) {
-            spdlog::error("Window creation failed: {}", SDL_GetError());
+            spdlog::error("Main window creation failed: {}", SDL_GetError());
             return false;
         }
-        spdlog::debug("Window created: {}x{}", WINDOW_WIDTH, WINDOW_HEIGHT);
+        spdlog::debug("Main window created: {}x{}", WINDOW_WIDTH, WINDOW_HEIGHT);
         
         renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_ACCELERATED);
         if (!renderer_) {
-            spdlog::error("Renderer creation failed: {}", SDL_GetError());
+            spdlog::error("Main renderer creation failed: {}", SDL_GetError());
             return false;
         }
-        spdlog::debug("Renderer created successfully");
+        spdlog::debug("Main renderer created successfully");
+        
+        // Create visualization window
+        viz_window_ = SDL_CreateWindow("Neuron Experiment - 3D Visualization",
+                                     WINDOW_WIDTH + 50, SDL_WINDOWPOS_UNDEFINED,
+                                     VIZ_WINDOW_WIDTH, VIZ_WINDOW_HEIGHT,
+                                     SDL_WINDOW_SHOWN);
+        
+        if (!viz_window_) {
+            spdlog::error("Visualization window creation failed: {}", SDL_GetError());
+            return false;
+        }
+        spdlog::debug("Visualization window created: {}x{}", VIZ_WINDOW_WIDTH, VIZ_WINDOW_HEIGHT);
+        
+        viz_renderer_ = SDL_CreateRenderer(viz_window_, -1, SDL_RENDERER_ACCELERATED);
+        if (!viz_renderer_) {
+            spdlog::error("Visualization renderer creation failed: {}", SDL_GetError());
+            return false;
+        }
+        spdlog::debug("Visualization renderer created successfully");
         
         spdlog::info("Application initialization complete");
         return true;
@@ -171,6 +206,29 @@ public:
                      NEURON_ADDRESS_BITS, DENDRITE_ADDRESS_BITS, MAX_NEURONS);
         spdlog::info("  - Sensor grid: {}x{} = {} sensors", GRID_SIZE, GRID_SIZE, GRID_SIZE * GRID_SIZE);
         spdlog::info("  - Neural network ready for processing");
+    }
+    
+    IsometricPoint project_to_isometric(const Vec3& point) {
+        // Isometric projection: rotate by 45° around Y, then 35.264° around X
+        float cos45 = 0.707f;
+        float sin45 = 0.707f;
+        float cos35 = 0.816f;
+        float sin35 = 0.577f;
+        
+        // Scale and center the coordinates
+        float scale = 200.0f;
+        float center_x = VIZ_WINDOW_WIDTH / 2.0f;
+        float center_y = VIZ_WINDOW_HEIGHT / 2.0f;
+        
+        // Apply rotation matrices
+        float x = point.x * cos45 - point.z * sin45;
+        float y = point.y;
+        float z = point.x * sin45 + point.z * cos45;
+        
+        float iso_x = x;
+        float iso_y = y * cos35 - z * sin35;
+        
+        return {center_x + iso_x * scale, center_y - iso_y * scale};
     }
     
     void initialize_shard_threads() {
@@ -235,6 +293,7 @@ public:
             handle_events();
             update();
             render();
+            render_visualization();
             
             SDL_Delay(16); // ~60 FPS
         }
@@ -410,6 +469,111 @@ public:
         }
     }
     
+    void render_visualization() {
+        // Clear visualization window to black
+        SDL_SetRenderDrawColor(viz_renderer_, 0, 0, 0, 255);
+        SDL_RenderClear(viz_renderer_);
+        
+        // Get current time for expiration
+        auto current_time = std::chrono::steady_clock::now();
+        
+        // Extract and filter recent firings
+        std::vector<NeuronFiringEvent> local_firings;
+        {
+            std::lock_guard<std::mutex> lock(firing_mutex_);
+            local_firings = std::move(recent_firings_);
+            recent_firings_.clear();
+        }
+        
+        // Filter out firings older than 100ms and put back recent ones
+        std::vector<NeuronFiringEvent> valid_firings;
+        for (const auto& firing : local_firings) {
+            auto firing_time = std::chrono::steady_clock::time_point{std::chrono::milliseconds(firing.timestamp * 100)};
+            auto age = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - firing_time).count();
+            
+            if (age <= 100) {
+                valid_firings.push_back(firing);
+            }
+        }
+        
+        // Put valid firings back
+        {
+            std::lock_guard<std::mutex> lock(firing_mutex_);
+            recent_firings_ = valid_firings;
+        }
+        
+        // Draw sensors (at bottom of space)
+        SDL_SetRenderDrawColor(viz_renderer_, 0, 255, 0, 255); // Green for sensors
+        for (uint32_t sensor_idx = 0; sensor_idx < GRID_SIZE * GRID_SIZE; ++sensor_idx) {
+            const Sensor& sensor = brain_->sensor_grid.sensors[sensor_idx];
+            IsometricPoint iso_point = project_to_isometric(sensor.position);
+            
+            SDL_Rect sensor_rect;
+            sensor_rect.x = static_cast<int>(iso_point.x) - 2;
+            sensor_rect.y = static_cast<int>(iso_point.y) - 2;
+            sensor_rect.w = 4;
+            sensor_rect.h = 4;
+            SDL_RenderFillRect(viz_renderer_, &sensor_rect);
+        }
+        
+        // Draw actuator neurons
+        SDL_SetRenderDrawColor(viz_renderer_, 255, 0, 0, 255); // Red for actuators
+        for (uint32_t neuron_idx = 0; neuron_idx < MAX_NEURONS; ++neuron_idx) {
+            if (brain_->neurons[neuron_idx].is_actuator) {
+                IsometricPoint iso_point = project_to_isometric(brain_->neurons[neuron_idx].position);
+                
+                SDL_Rect actuator_rect;
+                actuator_rect.x = static_cast<int>(iso_point.x) - 3;
+                actuator_rect.y = static_cast<int>(iso_point.y) - 3;
+                actuator_rect.w = 6;
+                actuator_rect.h = 6;
+                SDL_RenderFillRect(viz_renderer_, &actuator_rect);
+            }
+        }
+        
+        // Draw regular neurons (small blue dots)
+        SDL_SetRenderDrawColor(viz_renderer_, 0, 100, 255, 128); // Blue for neurons
+        for (uint32_t neuron_idx = 0; neuron_idx < MAX_NEURONS; ++neuron_idx) {
+            if (!brain_->neurons[neuron_idx].is_actuator) {
+                IsometricPoint iso_point = project_to_isometric(brain_->neurons[neuron_idx].position);
+                
+                SDL_Rect neuron_rect;
+                neuron_rect.x = static_cast<int>(iso_point.x) - 1;
+                neuron_rect.y = static_cast<int>(iso_point.y) - 1;
+                neuron_rect.w = 2;
+                neuron_rect.h = 2;
+                SDL_RenderFillRect(viz_renderer_, &neuron_rect);
+            }
+        }
+        
+        // Draw recent neuron firings with fading effect
+        for (const auto& firing : valid_firings) {
+            auto firing_time = std::chrono::steady_clock::time_point{std::chrono::milliseconds(firing.timestamp * 100)};
+            auto age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - firing_time).count();
+            
+            float alpha = 1.0f - (age_ms / 100.0f);
+            if (alpha <= 0.0f) continue;
+            
+            IsometricPoint iso_point = project_to_isometric(firing.position);
+            
+            // Draw firing as bright yellow circle with fade
+            SDL_SetRenderDrawColor(viz_renderer_, 255, 255, 0, static_cast<uint8_t>(alpha * 255));
+            
+            int radius = 5 + static_cast<int>(firing.activation_strength * 3);
+            for (int y = -radius; y <= radius; ++y) {
+                for (int x = -radius; x <= radius; ++x) {
+                    if (x*x + y*y <= radius*radius) {
+                        SDL_RenderDrawPoint(viz_renderer_, 
+                                           static_cast<int>(iso_point.x) + x,
+                                           static_cast<int>(iso_point.y) + y);
+                    }
+                }
+            }
+        }
+        
+        SDL_RenderPresent(viz_renderer_);
+    }
+    
     void render() {
         // Clear screen to black
         SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
@@ -445,6 +609,16 @@ public:
     }
     
     void cleanup() {
+        if (viz_renderer_) {
+            SDL_DestroyRenderer(viz_renderer_);
+            viz_renderer_ = nullptr;
+        }
+        
+        if (viz_window_) {
+            SDL_DestroyWindow(viz_window_);
+            viz_window_ = nullptr;
+        }
+        
         if (renderer_) {
             SDL_DestroyRenderer(renderer_);
             renderer_ = nullptr;

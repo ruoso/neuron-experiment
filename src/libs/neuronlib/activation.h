@@ -8,6 +8,8 @@
 #include <queue>
 #include <mutex>
 #include <atomic>
+#include <functional>
+#include "geometry.h"
 
 namespace neuronlib {
 
@@ -33,6 +35,17 @@ struct TargetedActivation {
     TargetedActivation() : target_address(0) {}
     TargetedActivation(uint32_t addr, const Activation& act) : target_address(addr), activation(act) {}
 };
+
+struct NeuronFiringEvent {
+    Vec3 position;
+    float activation_strength;
+    uint32_t timestamp;
+    
+    NeuronFiringEvent(const Vec3& pos, float strength, uint32_t time) 
+        : position(pos), activation_strength(strength), timestamp(time) {}
+};
+
+using NeuronFiringCallback = std::function<void(const NeuronFiringEvent&)>;
 
 class ThreadSafeQueue {
 public:
@@ -87,8 +100,12 @@ public:
     
     static uint32_t get_shard_index(uint32_t target_address);
     
+    void set_neuron_firing_callback(NeuronFiringCallback callback);
+    void trigger_neuron_firing_callback(const NeuronFiringEvent& event);
+    
 private:
     std::array<ActivationShard, NUM_ACTIVATION_SHARDS> shards_;
+    NeuronFiringCallback neuron_firing_callback_;
 };
 
 float get_decayed_activation(uint32_t last_activation_time, uint32_t current_time, float decay_rate = 0.9f);
