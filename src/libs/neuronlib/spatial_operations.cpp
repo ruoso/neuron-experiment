@@ -489,6 +489,16 @@ BrainPtr populate_neuron_grid(
     // Create brain
     auto brain = std::make_unique<Brain>();
     
+    // Initialize random number generator for weights and thresholds
+    std::mt19937 weight_rng(random_seed + 1000000);
+    std::uniform_real_distribution<float> weight_dist(-1.0f, 1.0f);
+    std::uniform_real_distribution<float> threshold_dist(0.1f, 2.0f);
+    
+    // Initialize all weights to random values
+    for (uint32_t i = 0; i < MAX_ADDRESSES; ++i) {
+        brain->weights[i] = weight_dist(weight_rng);
+    }
+    
     // Calculate 3D grid dimensions - try to make it as cubic as possible
     uint32_t cube_root = static_cast<uint32_t>(std::cbrt(MAX_NEURONS));
     uint32_t grid_x = cube_root;
@@ -539,7 +549,7 @@ BrainPtr populate_neuron_grid(
                 // Initialize neuron in brain
                 brain->neurons[neuron_count].position = neuron_position;
                 brain->neurons[neuron_count].output_direction = normalize_vector(evaluate_flow_field(flow_field, neuron_position));
-                brain->neurons[neuron_count].threshold = neuron_threshold;
+                brain->neurons[neuron_count].threshold = threshold_dist(weight_rng);
                 // output_targets array is already zero-initialized by memset
                 
                 // Add neuron to spatial items

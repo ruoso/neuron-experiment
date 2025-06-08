@@ -2,10 +2,14 @@
 #include "brain.h"
 #include "actuator.h"
 #include "dendrite.h"
+#include "spatial_operations.h"
+#include <spdlog/spdlog.h>
 #include <cmath>
 #include <algorithm>
 #include <unordered_map>
 #include <new>
+#include <random>
+#include <limits>
 
 namespace neuronlib {
 
@@ -99,6 +103,83 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
                 } else {
                     cross_shard_activations.push_back(output);
                 }
+            }
+        } else if (is_neuron_address(target_address)) {
+            // Direct neuron activation - check threshold and fire
+            uint32_t neuron_index = target_address >> DENDRITE_ADDRESS_BITS;
+            
+            if (neuron_index < MAX_NEURONS && total_input >= brain.neurons[neuron_index].threshold) {
+                spdlog::debug("Neuron {} firing with total input {}", neuron_index, total_input);
+                // Neuron fires - check if it's an actuator
+                if (brain.neurons[neuron_index].is_actuator) {
+                    // Generate actuation event
+                    ActuationEvent actuation_event(brain.neurons[neuron_index].position, current_timestamp);
+                    brain.actuation_queue.push(actuation_event);
+                }
+                
+                for (size_t i = 0; i < MAX_OUTPUT_TARGETS; ++i) {
+                    if (brain.neurons[neuron_index].output_targets[i] == 0) {
+                        // Empty slot - small chance to form a new connection (10% chance)
+                        // Check for forming one new connection
+                        static std::mt19937 connection_rng(current_timestamp);
+                        std::uniform_real_distribution<float> connection_chance(0.0f, 1.0f);
+                
+                        if (connection_chance(connection_rng) < 0.8f) {
+                            // Try to find a dendrite in the output cone
+                            Vec3 neuron_pos = brain.neurons[neuron_index].position;
+                            Vec3 output_dir = brain.neurons[neuron_index].output_direction;
+                            
+                            // Create frustum to search for dendrites in output direction
+                            Vec3 cone_end = {
+                                neuron_pos.x + output_dir.x * 1.0f,  // 1.0 unit forward
+                                neuron_pos.y + output_dir.y * 1.0f,
+                                neuron_pos.z + output_dir.z * 1.0f
+                            };
+                            Frustum3D search_cone(neuron_pos, cone_end, 0.0f, 0.3f);  // Small apex, wider base
+                            
+                            // Search for dendrites in the cone
+                            auto search_results = search_frustum(brain.spatial_grid, search_cone);
+                            
+                            // Find the closest dendrite terminal
+                            uint32_t closest_dendrite = 0;
+                            float closest_distance = std::numeric_limits<float>::max();
+                            
+                            for (const auto& result : search_results) {
+                                if (is_terminal_address(result.item_address) && 
+                                    result.distance_to_apex < closest_distance) {
+                                    closest_dendrite = result.item_address;
+                                    closest_distance = result.distance_to_apex;
+                                }
+                            }
+                            
+                            if (closest_dendrite != 0) {
+                                spdlog::debug("Neuron {} forming new connection to dendrite {}", 
+                                          neuron_index, closest_dendrite);
+                                brain.neurons[neuron_index].output_targets[i] = closest_dendrite;
+                            }
+                        }
+                        break; // Only form one connection per activation
+                    }
+                }
+                
+                // Send activations to its output targets
+                for (size_t i = 0; i < MAX_OUTPUT_TARGETS; ++i) {
+                    uint32_t output_target = brain.neurons[neuron_index].output_targets[i];
+                    if (output_target != 0) {
+                        TargetedActivation output(output_target, Activation(1.0f, current_timestamp));
+                        
+                        // Check if this goes to same shard or different shard
+                        if (ShardedMessageProcessor::get_shard_index(output_target) == 
+                            ShardedMessageProcessor::get_shard_index(target_address)) {
+                            local_activations.push_back(output);
+                        } else {
+                            cross_shard_activations.push_back(output);
+                        }
+                    }
+                }
+                
+                // Update last activation time (use the target address for proper indexing)
+                brain.last_activations[target_address >> ACTIVATION_TIME_SHIFT] = current_timestamp;
             }
         } else if (is_branch_address(target_address)) {
             // Branch: check threshold and either propagate up or fire neuron
