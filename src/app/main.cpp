@@ -151,6 +151,8 @@ public:
                                      GRID_SIZE, GRID_SIZE, 0.3f, 0.1f, 12345);
         
         spdlog::info("Brain initialized successfully:");
+        spdlog::info("  - Addressing: {} neuron bits, {} dendrite bits = {} max neurons", 
+                     NEURON_ADDRESS_BITS, DENDRITE_ADDRESS_BITS, MAX_NEURONS);
         spdlog::info("  - Sensor grid: {}x{} = {} sensors", GRID_SIZE, GRID_SIZE, GRID_SIZE * GRID_SIZE);
         spdlog::info("  - Neural network ready for processing");
     }

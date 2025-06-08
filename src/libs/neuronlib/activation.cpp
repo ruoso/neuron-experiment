@@ -107,7 +107,7 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
             if (parent_address == target_address) {
                 // This is the soma (top-level branch)
                 uint32_t neuron_address = get_neuron_address(target_address);
-                uint32_t neuron_index = neuron_address >> 12;
+                uint32_t neuron_index = neuron_address >> DENDRITE_ADDRESS_BITS;
                 
                 if (neuron_index < MAX_NEURONS && total_input >= brain.neurons[neuron_index].threshold) {
                     // Neuron fires - check if it's an actuator

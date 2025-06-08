@@ -39,7 +39,7 @@ void mark_actuator_neurons(Brain& brain, float actuator_z_threshold) {
     for (const auto& result : search_results) {
         if (!is_terminal_address(result.item_address) && !is_branch_address(result.item_address)) {
             // This is a neuron address
-            uint32_t neuron_index = result.item_address >> 12;
+            uint32_t neuron_index = result.item_address >> DENDRITE_ADDRESS_BITS;
             if (neuron_index < MAX_NEURONS) {
                 brain.neurons[neuron_index].is_actuator = true;
             }

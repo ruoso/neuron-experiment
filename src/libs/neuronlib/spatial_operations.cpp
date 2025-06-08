@@ -533,8 +533,8 @@ BrainPtr populate_neuron_grid(
                     flow_field.min_z + z * spacing_z
                 };
                 
-                // Create neuron address (shifted left by 12 bits to leave dendrite space)
-                uint32_t neuron_address = neuron_count << 12;
+                // Create neuron address (shifted left by dendrite bits to leave dendrite space)
+                uint32_t neuron_address = neuron_count << DENDRITE_ADDRESS_BITS;
                 
                 // Initialize neuron in brain
                 brain->neurons[neuron_count].position = neuron_position;
