@@ -138,9 +138,8 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
                 if (neuron_fired) {
                     //spdlog::debug("Neuron {} firing with total input {}", neuron_index, total_input);
                     
-                    // Trigger visualization callback
-                    NeuronFiringEvent event(brain.neurons[neuron_index].position, total_input, current_timestamp);
-                    processor->trigger_neuron_firing_callback(event);
+                    // Add to firing events batch for later callback
+                    firing_events_batch_.emplace_back(brain.neurons[neuron_index].position, total_input, current_timestamp);
                     
                     // Neuron fires - check if it's an actuator
                     if (brain.neurons[neuron_index].is_actuator) {
@@ -279,6 +278,12 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
     if (!cross_shard_activations.empty()) {
         processor->send_activations_to_shards(cross_shard_activations);
     }
+    
+    // Send batched firing events for visualization
+    if (!firing_events_batch_.empty() && processor) {
+        processor->trigger_neuron_firing_callback(firing_events_batch_);
+        firing_events_batch_.clear();
+    }
 }
 
 ShardedMessageProcessor::ShardedMessageProcessor(uint32_t timing_window) {
@@ -323,9 +328,9 @@ void ShardedMessageProcessor::set_neuron_firing_callback(NeuronFiringCallback ca
     neuron_firing_callback_ = callback;
 }
 
-void ShardedMessageProcessor::trigger_neuron_firing_callback(const NeuronFiringEvent& event) {
-    if (neuron_firing_callback_) {
-        neuron_firing_callback_(event);
+void ShardedMessageProcessor::trigger_neuron_firing_callback(const std::vector<NeuronFiringEvent>& events) {
+    if (neuron_firing_callback_ && !events.empty()) {
+        neuron_firing_callback_(events);
     }
 }
 

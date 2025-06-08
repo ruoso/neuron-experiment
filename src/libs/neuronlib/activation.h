@@ -45,7 +45,7 @@ struct NeuronFiringEvent {
         : position(pos), activation_strength(strength), timestamp(time) {}
 };
 
-using NeuronFiringCallback = std::function<void(const NeuronFiringEvent&)>;
+using NeuronFiringCallback = std::function<void(const std::vector<NeuronFiringEvent>&)>;
 
 class ThreadSafeQueue {
 public:
@@ -85,6 +85,7 @@ private:
     uint32_t timing_window_;
     std::unordered_map<uint32_t, std::vector<Activation>> pending_messages_;
     ThreadSafeQueue input_queue_;
+    std::vector<NeuronFiringEvent> firing_events_batch_;
 };
 
 class ShardedMessageProcessor {
@@ -101,7 +102,7 @@ public:
     static uint32_t get_shard_index(uint32_t target_address);
     
     void set_neuron_firing_callback(NeuronFiringCallback callback);
-    void trigger_neuron_firing_callback(const NeuronFiringEvent& event);
+    void trigger_neuron_firing_callback(const std::vector<NeuronFiringEvent>& events);
     
 private:
     std::array<ActivationShard, NUM_ACTIVATION_SHARDS> shards_;

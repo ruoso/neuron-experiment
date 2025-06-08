@@ -77,7 +77,8 @@ private:
     std::atomic<uint32_t> simulation_timestamp_;
     
     // Visualization
-    std::vector<NeuronFiringEvent> recent_firings_;
+    std::vector<NeuronFiringEvent> recent_firings_;  // Thread-safe accumulator
+    std::vector<NeuronFiringEvent> local_firings_;   // Local processing copy
     std::mutex firing_mutex_;
     
     // Timing
@@ -95,9 +96,11 @@ public:
         initialize_brain();
         
         // Set up firing callback
-        message_processor_.set_neuron_firing_callback([this](const NeuronFiringEvent& event) {
+        message_processor_.set_neuron_firing_callback([this](const std::vector<NeuronFiringEvent>& events) {
             std::lock_guard<std::mutex> lock(firing_mutex_);
-            recent_firings_.push_back(event);
+            for (const auto& event : events) {
+                recent_firings_.push_back(event);
+            }
         });
         
         // Initialize shard threads
@@ -209,26 +212,27 @@ public:
     }
     
     IsometricPoint project_to_isometric(const Vec3& point) {
-        // Isometric projection: rotate by 45° around Y, then 35.264° around X
-        float cos45 = 0.707f;
-        float sin45 = 0.707f;
-        float cos35 = 0.816f;
-        float sin35 = 0.577f;
+        // Side view projection: rotate by -20° around Y for slight angle, then 20° around X for top-down tilt
+        float cos_y = 0.940f;  // cos(-20°)
+        float sin_y = 0.342f;  // sin(-20°) 
+        float cos_x = 0.940f;  // cos(20°)
+        float sin_x = 0.342f;  // sin(20°)
         
         // Scale and center the coordinates
-        float scale = 200.0f;
+        float scale = 250.0f;
         float center_x = VIZ_WINDOW_WIDTH / 2.0f;
         float center_y = VIZ_WINDOW_HEIGHT / 2.0f;
         
-        // Apply rotation matrices (rotated 180° to flip front/back)
-        float x = point.x * (-cos45) - point.z * (-sin45);  // Flip the rotation
-        float y = point.y;
-        float z = point.x * (-sin45) + point.z * (-cos45);
+        // Apply Y rotation first (horizontal viewing angle) - flip the rotation
+        float x1 = point.x * cos_y + point.z * sin_y;  // Changed sign to flip view
+        float y1 = point.y;
+        float z1 = -point.x * sin_y + point.z * cos_y;  // Changed sign to flip view
         
-        float iso_x = x;
-        float iso_y = y * cos35 - z * sin35;
+        // Then apply X rotation (vertical viewing angle)
+        float x2 = x1;
+        float y2 = y1 * cos_x - z1 * sin_x;
         
-        return {center_x + iso_x * scale, center_y - iso_y * scale};
+        return {center_x + x2 * scale, center_y - y2 * scale};
     }
     
     void initialize_shard_threads() {
@@ -472,30 +476,26 @@ public:
         SDL_SetRenderDrawColor(viz_renderer_, 0, 0, 0, 255);
         SDL_RenderClear(viz_renderer_);
                 
-        // Extract and filter recent firings
-        std::vector<NeuronFiringEvent> local_firings;
+        // Move recent firings to local for processing
         {
             std::lock_guard<std::mutex> lock(firing_mutex_);
-            local_firings = std::move(recent_firings_);
+            for (const auto& event : recent_firings_) {
+                local_firings_.push_back(event);
+            }
             recent_firings_.clear();
         }
         
-        // Filter out firings older than 100ms and put back recent ones
-        std::vector<NeuronFiringEvent> valid_firings;
+        // Filter out old firings from local copy
         auto current_timestamp = simulation_timestamp_.load();
-        for (const auto& firing : local_firings) {
-            auto age = current_timestamp - firing.timestamp;
-            if (age <= 10) {
-                valid_firings.push_back(firing);
-            }
-        }
-        //spdlog::debug("valid firings: {} (out of {})", valid_firings.size(), local_firings.size());
-
-        // Put valid firings back
-        {
-            std::lock_guard<std::mutex> lock(firing_mutex_);
-            recent_firings_ = valid_firings;
-        }
+        local_firings_.erase(
+            std::remove_if(local_firings_.begin(), local_firings_.end(),
+                [current_timestamp](const NeuronFiringEvent& firing) {
+                    return (current_timestamp - firing.timestamp) > 10;
+                }), 
+            local_firings_.end()
+        );
+        
+        std::vector<NeuronFiringEvent> valid_firings = local_firings_;
         
         // Draw sensors (at bottom of space)
         SDL_SetRenderDrawColor(viz_renderer_, 0, 100, 255, 255); // Blue for sensors
