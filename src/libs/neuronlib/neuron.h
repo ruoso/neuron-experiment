@@ -3,6 +3,7 @@
 
 #include "geometry.h"
 #include <cstdint>
+#include <cstddef>
 
 namespace neuronlib {
 

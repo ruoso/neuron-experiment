@@ -161,13 +161,13 @@ TEST_F(NeuronPopulationTest, PopulateNeuronGrid_SpatialGridPopulation) {
     ASSERT_NE(brain->spatial_grid, nullptr);
     
     // Create a frustum that should capture some items
-    Frustum3D search_frustum(
+    Frustum3D search_volume(
         {5.0f, 5.0f, 0.0f},   // apex
         {5.0f, 5.0f, 10.0f},  // base center
         5.0f, 0.0f            // base radius, apex radius
     );
     
-    auto results = search_frustum(brain->spatial_grid, search_frustum);
+    auto results = search_frustum(brain->spatial_grid, search_volume);
     
     // Should find some items (neurons and/or dendrite terminals)
     EXPECT_GT(results.size(), 0);

@@ -100,14 +100,7 @@ public:
     
     void initialize_brain() {
         // Create a simple 3D flow field
-        FlowField3D flow_field;
-        flow_field.min_x = -1.0f; flow_field.max_x = 1.0f;
-        flow_field.min_y = -1.0f; flow_field.max_y = 1.0f;
-        flow_field.min_z = -1.0f; flow_field.max_z = 1.0f;
-        flow_field.input_section_end = -0.5f;
-        flow_field.output_section_start = 0.5f;
-        flow_field.input_direction = {0.0f, 0.0f, 1.0f};
-        flow_field.output_direction = {0.0f, 0.0f, 1.0f};
+        FlowField3D flow_field(-1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f, 0.4f, 0.4f, 0.1f);
         
         // Create brain with matching sensor grid
         brain_ = populate_neuron_grid(flow_field, 1.0f, 45.0f, 0.1f, 0.5f,

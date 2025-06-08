@@ -104,10 +104,10 @@ void assign_dendrites_to_sensors(SensorGrid& sensor_grid,
         // Create a frustum to search for nearby dendrites
         Vec3 search_center = sensor.position;
         Vec3 search_end = {sensor.position.x, sensor.position.y, sensor.position.z + connection_radius};
-        Frustum3D search_frustum(search_center, search_end, connection_radius, 0.0f);
+        Frustum3D search_volume(search_center, search_end, connection_radius, 0.0f);
         
         // Find all dendrite terminals within connection radius
-        auto search_results = search_frustum(brain.spatial_grid, search_frustum);
+        auto search_results = search_frustum(brain.spatial_grid, search_volume);
         
         // Filter to only dendrite terminals (not neurons)
         std::vector<uint32_t> nearby_dendrites;

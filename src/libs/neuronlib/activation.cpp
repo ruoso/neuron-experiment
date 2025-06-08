@@ -1,9 +1,11 @@
 #include "activation.h"
+#include "brain.h"
 #include "actuator.h"
 #include "dendrite.h"
 #include <cmath>
 #include <algorithm>
 #include <unordered_map>
+#include <new>
 
 namespace neuronlib {
 
@@ -163,8 +165,8 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
 }
 
 ShardedMessageProcessor::ShardedMessageProcessor(uint32_t timing_window) {
-    for (auto& shard : shards_) {
-        shard = ActivationShard(timing_window);
+    for (size_t i = 0; i < NUM_ACTIVATION_SHARDS; ++i) {
+        new(&shards_[i]) ActivationShard(timing_window);
     }
 }
 

@@ -20,9 +20,10 @@ protected:
         
         auto root_node = std::make_shared<SpatialNode>(std::move(root_branch));
         
-        test_grid = std::make_shared<SpatialGrid>();
-        test_grid->root = root_node;
-        test_grid->max_depth = 3;
+        auto mutable_grid = std::make_shared<SpatialGrid>();
+        mutable_grid->root = std::const_pointer_cast<const SpatialNode>(root_node);
+        mutable_grid->max_depth = 3;
+        test_grid = mutable_grid;
     }
     
     SpatialGridPtr test_grid;

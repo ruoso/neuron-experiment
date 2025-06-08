@@ -1,7 +1,6 @@
 #ifndef NEURONLIB_ACTIVATION_H
 #define NEURONLIB_ACTIVATION_H
 
-#include "brain.h"
 #include <vector>
 #include <unordered_map>
 #include <cstdint>
@@ -11,6 +10,11 @@
 #include <atomic>
 
 namespace neuronlib {
+
+// Forward declarations
+struct Brain;
+struct ActuationEvent;
+class ShardedMessageProcessor;
 
 struct Activation {
     float value;
