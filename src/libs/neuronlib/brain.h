@@ -3,6 +3,7 @@
 
 #include "spatial.h"
 #include "neuron.h"
+#include "sensor.h"
 #include <cstdint>
 #include <memory>
 
@@ -17,6 +18,7 @@ struct Brain {
     float weights[MAX_ADDRESSES];
     uint32_t last_activations[ACTIVATION_ARRAY_SIZE];
     Neuron neurons[MAX_NEURONS];
+    SensorGrid sensor_grid;
     
     Brain();
     

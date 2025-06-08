@@ -1,4 +1,5 @@
 #include "spatial_operations.h"
+#include "sensor.h"
 #include <memory>
 #include <array>
 #include <algorithm>
@@ -417,6 +418,9 @@ BrainPtr populate_neuron_grid(
     float dendrite_cone_angle,
     float dendrite_min_distance,
     float dendrite_max_distance,
+    uint32_t sensor_grid_width,
+    uint32_t sensor_grid_height,
+    float sensor_connection_radius,
     uint32_t random_seed) {
     
     // Create brain
@@ -496,6 +500,16 @@ BrainPtr populate_neuron_grid(
     
     // Insert all items into the spatial grid
     brain->spatial_grid = insert_batch(spatial_grid, all_items);
+    
+    // Populate sensor grid at the bottom Z plane of the flow field
+    populate_sensor_grid(brain->sensor_grid,
+                        sensor_grid_width, sensor_grid_height,
+                        flow_field.min_x, flow_field.min_y, flow_field.min_z,
+                        flow_field.max_x, flow_field.max_y);
+    
+    // Assign dendrites to sensor modes
+    assign_dendrites_to_sensors(brain->sensor_grid, *brain, 
+                               sensor_connection_radius, random_seed + 999999);
     
     return brain;
 }

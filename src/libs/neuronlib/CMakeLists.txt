@@ -7,6 +7,7 @@ add_library(neuronlib
     dendrite.cpp
     brain.cpp
     activation.cpp
+    sensor.cpp
 )
 
 target_include_directories(neuronlib PUBLIC

@@ -50,6 +50,9 @@ BrainPtr populate_neuron_grid(
     float dendrite_cone_angle = 45.0f,
     float dendrite_min_distance = 0.1f,
     float dendrite_max_distance = 0.5f,
+    uint32_t sensor_grid_width = 32,
+    uint32_t sensor_grid_height = 32,
+    float sensor_connection_radius = 0.3f,
     uint32_t random_seed = 12345);
 
 } // namespace neuronlib
