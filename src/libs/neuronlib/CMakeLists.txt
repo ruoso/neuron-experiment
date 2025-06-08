@@ -3,6 +3,8 @@ add_library(neuronlib
     spatial.cpp
     spatial_operations.cpp
     geometry.cpp
+    flow_field.cpp
+    dendrite.cpp
 )
 
 target_include_directories(neuronlib PUBLIC
