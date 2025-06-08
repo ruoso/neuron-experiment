@@ -136,13 +136,11 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
                 }
                 
                 if (neuron_fired) {
-                    spdlog::debug("Neuron {} firing with total input {}", neuron_index, total_input);
+                    //spdlog::debug("Neuron {} firing with total input {}", neuron_index, total_input);
                     
                     // Trigger visualization callback
-                    if (processor) {
-                        NeuronFiringEvent event(brain.neurons[neuron_index].position, total_input, current_timestamp);
-                        processor->trigger_neuron_firing_callback(event);
-                    }
+                    NeuronFiringEvent event(brain.neurons[neuron_index].position, total_input, current_timestamp);
+                    processor->trigger_neuron_firing_callback(event);
                     
                     // Neuron fires - check if it's an actuator
                     if (brain.neurons[neuron_index].is_actuator) {
@@ -187,8 +185,8 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
                                 }
                                 
                                 if (closest_dendrite != 0) {
-                                    spdlog::debug("Neuron {} forming new connection to dendrite {}", 
-                                              neuron_index, closest_dendrite);
+                                    //spdlog::debug("Neuron {} forming new connection to dendrite {}", 
+                                    //          neuron_index, closest_dendrite);
                                     brain.neurons[neuron_index].output_targets[i] = closest_dendrite;
                                 }
                             }

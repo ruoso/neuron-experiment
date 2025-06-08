@@ -199,7 +199,7 @@ public:
         
         // Create brain with matching sensor grid
         brain_ = populate_neuron_grid(flow_field, 1.0f, 45.0f, 0.1f, 0.5f,
-                                     GRID_SIZE, GRID_SIZE, 0.3f, 0.1f, 12345);
+                                     GRID_SIZE, GRID_SIZE, 0.3f, 0.2f, 12345);
         
         spdlog::info("Brain initialized successfully:");
         spdlog::info("  - Addressing: {} neuron bits, {} dendrite bits = {} max neurons", 
@@ -220,10 +220,10 @@ public:
         float center_x = VIZ_WINDOW_WIDTH / 2.0f;
         float center_y = VIZ_WINDOW_HEIGHT / 2.0f;
         
-        // Apply rotation matrices
-        float x = point.x * cos45 - point.z * sin45;
+        // Apply rotation matrices (rotated 180° to flip front/back)
+        float x = point.x * (-cos45) - point.z * (-sin45);  // Flip the rotation
         float y = point.y;
-        float z = point.x * sin45 + point.z * cos45;
+        float z = point.x * (-sin45) + point.z * (-cos45);
         
         float iso_x = x;
         float iso_y = y * cos35 - z * sin35;
@@ -344,12 +344,12 @@ public:
             simulation_step();
             last_update_ = current_time;
             simulation_timestamp_.fetch_add(1);
+            spdlog::debug("Simulation step completed, timestamp: {}", simulation_timestamp_.load());
         }
     }
     
     void simulation_step() {
         uint32_t current_timestamp = simulation_timestamp_.load();
-        spdlog::debug("=== Simulation Step {} ===", current_timestamp);
         
         // 1. Fade all cells by 1/4
         fade_grid();
@@ -362,8 +362,6 @@ public:
         
         // 4. Handle actuator outputs
         process_actuator_outputs();
-        
-        spdlog::debug("Simulation step {} complete", current_timestamp);
     }
     
     void fade_grid() {
@@ -420,15 +418,15 @@ public:
         }
         
         if (!activations.empty()) {
-            spdlog::debug("Generated {} sensor activations: {} user, {} actuator", 
-                         activations.size(), user_activations, actuator_activations);
+            //spdlog::debug("Generated {} sensor activations: {} user, {} actuator", 
+            //             activations.size(), user_activations, actuator_activations);
         }
         
         // Process sensor activations and send to neural network
         uint32_t current_timestamp = simulation_timestamp_.load();
         auto targeted_activations = process_sensor_activations(brain_->sensor_grid, activations, current_timestamp);
         if (!targeted_activations.empty()) {
-            spdlog::debug("Converted to {} targeted neural activations", targeted_activations.size());
+            //spdlog::debug("Converted to {} targeted neural activations", targeted_activations.size());
             message_processor_.send_activations_to_shards(targeted_activations);
         }
     }
@@ -436,7 +434,7 @@ public:
     void process_neural_network() {
         // Neural network processing is now handled by shard threads
         // Just update the simulation timestamp to coordinate the threads
-        spdlog::debug("Updating simulation timestamp for {} shard threads", NUM_ACTIVATION_SHARDS);
+        //spdlog::debug("Updating simulation timestamp for {} shard threads", NUM_ACTIVATION_SHARDS);
     }
     
     void process_actuator_outputs() {
@@ -473,10 +471,7 @@ public:
         // Clear visualization window to black
         SDL_SetRenderDrawColor(viz_renderer_, 0, 0, 0, 255);
         SDL_RenderClear(viz_renderer_);
-        
-        // Get current time for expiration
-        auto current_time = std::chrono::steady_clock::now();
-        
+                
         // Extract and filter recent firings
         std::vector<NeuronFiringEvent> local_firings;
         {
@@ -487,15 +482,15 @@ public:
         
         // Filter out firings older than 100ms and put back recent ones
         std::vector<NeuronFiringEvent> valid_firings;
+        auto current_timestamp = simulation_timestamp_.load();
         for (const auto& firing : local_firings) {
-            auto firing_time = std::chrono::steady_clock::time_point{std::chrono::milliseconds(firing.timestamp * 100)};
-            auto age = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - firing_time).count();
-            
-            if (age <= 100) {
+            auto age = current_timestamp - firing.timestamp;
+            if (age <= 10) {
                 valid_firings.push_back(firing);
             }
         }
-        
+        //spdlog::debug("valid firings: {} (out of {})", valid_firings.size(), local_firings.size());
+
         // Put valid firings back
         {
             std::lock_guard<std::mutex> lock(firing_mutex_);
@@ -503,7 +498,7 @@ public:
         }
         
         // Draw sensors (at bottom of space)
-        SDL_SetRenderDrawColor(viz_renderer_, 0, 255, 0, 255); // Green for sensors
+        SDL_SetRenderDrawColor(viz_renderer_, 0, 100, 255, 255); // Blue for sensors
         for (uint32_t sensor_idx = 0; sensor_idx < GRID_SIZE * GRID_SIZE; ++sensor_idx) {
             const Sensor& sensor = brain_->sensor_grid.sensors[sensor_idx];
             IsometricPoint iso_point = project_to_isometric(sensor.position);
@@ -531,8 +526,8 @@ public:
             }
         }
         
-        // Draw regular neurons (small blue dots)
-        SDL_SetRenderDrawColor(viz_renderer_, 0, 100, 255, 128); // Blue for neurons
+        // Draw regular neurons (small dark gray dots)
+        SDL_SetRenderDrawColor(viz_renderer_, 80, 80, 80, 255); // Dark gray for neurons
         for (uint32_t neuron_idx = 0; neuron_idx < MAX_NEURONS; ++neuron_idx) {
             if (!brain_->neurons[neuron_idx].is_actuator) {
                 IsometricPoint iso_point = project_to_isometric(brain_->neurons[neuron_idx].position);
@@ -548,10 +543,7 @@ public:
         
         // Draw recent neuron firings with fading effect
         for (const auto& firing : valid_firings) {
-            auto firing_time = std::chrono::steady_clock::time_point{std::chrono::milliseconds(firing.timestamp * 100)};
-            auto age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - firing_time).count();
-            
-            float alpha = 1.0f - (age_ms / 100.0f);
+            float alpha = 1.0f - ((current_timestamp - firing.timestamp) / 10.0f);
             if (alpha <= 0.0f) continue;
             
             IsometricPoint iso_point = project_to_isometric(firing.position);
@@ -559,7 +551,7 @@ public:
             // Draw firing as bright yellow circle with fade
             SDL_SetRenderDrawColor(viz_renderer_, 255, 255, 0, static_cast<uint8_t>(alpha * 255));
             
-            int radius = 5 + static_cast<int>(firing.activation_strength * 3);
+            int radius = 5;
             for (int y = -radius; y <= radius; ++y) {
                 for (int x = -radius; x <= radius; ++x) {
                     if (x*x + y*y <= radius*radius) {
