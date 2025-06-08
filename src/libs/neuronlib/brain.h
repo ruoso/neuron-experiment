@@ -22,14 +22,21 @@ static_assert(DENDRITE_ADDRESS_BITS + NEURON_ADDRESS_BITS <= TOTAL_ADDRESS_BITS,
 static_assert(NEURON_ADDRESS_BITS > 0, "Must have at least 1 bit for neuron addressing");
 static_assert(DENDRITE_ADDRESS_BITS == 12, "Dendrite addressing must be 12 bits (hardcoded in dendrite.h)");
 
-constexpr size_t MAX_ADDRESSES = static_cast<size_t>(UINT32_MAX) + 1;
-constexpr size_t ACTIVATION_ARRAY_SIZE = MAX_ADDRESSES / 8;
 constexpr size_t MAX_NEURONS = 1U << NEURON_ADDRESS_BITS;  // 2^11 = 2048 neurons
+constexpr size_t MAX_ADDRESSES = 1U << (NEURON_ADDRESS_BITS + DENDRITE_ADDRESS_BITS);  // 2^23 = 8,388,608 addresses
+
+// Activation time storage - pack multiple timestamps into single array elements
+constexpr uint32_t ACTIVATION_TIME_SHIFT = 3;  // 3 bits = divide by 8 for packing
+constexpr size_t ACTIVATION_ARRAY_SIZE = MAX_ADDRESSES >> ACTIVATION_TIME_SHIFT;  // Bit-packed activation timestamps
+
+// Note: Terminals (leaf dendrite nodes) don't perform computations or store state,
+// they just forward signals to their parent branches. Only branches and neurons
+// need activation tracking for threshold calculations and firing decisions.
 
 struct Brain {
     SpatialGridPtr spatial_grid;
     float weights[MAX_ADDRESSES];
-    uint32_t last_activations[ACTIVATION_ARRAY_SIZE];
+    uint32_t last_activations[MAX_ADDRESSES];
     Neuron neurons[MAX_NEURONS];
     SensorGrid sensor_grid;
     ActuationQueue actuation_queue;

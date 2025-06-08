@@ -87,7 +87,7 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
         
         // Check if this is a terminal or branch address
         if (is_terminal_address(target_address)) {
-            // Terminal: propagate to its branch
+            // Terminal: propagate to its branch (terminals don't store activation state)
             uint32_t branch_address = get_terminal_branch(target_address);
             if (total_input > 0.0f) {
                 TargetedActivation output(branch_address, Activation(total_input, current_timestamp));
@@ -133,8 +133,8 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
                         }
                     }
                     
-                    // Update last activation time
-                    brain.last_activations[neuron_index / 8] = current_timestamp;
+                    // Update last activation time (use the target address for proper indexing)
+                    brain.last_activations[target_address >> ACTIVATION_TIME_SHIFT] = current_timestamp;
                 }
             } else {
                 // Intermediate branch - propagate to parent
@@ -148,6 +148,9 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
                     } else {
                         cross_shard_activations.push_back(output);
                     }
+                    
+                    // Update last activation time for this branch
+                    brain.last_activations[target_address >> ACTIVATION_TIME_SHIFT] = current_timestamp;
                 }
             }
         }

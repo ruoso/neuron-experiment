@@ -218,5 +218,5 @@ TEST_F(NeuronPopulationTest, PopulateNeuronGrid_WeightsAndActivationsInitialized
     
     EXPECT_EQ(brain->last_activations[0], 0);
     EXPECT_EQ(brain->last_activations[1000], 0);
-    EXPECT_EQ(brain->last_activations[ACTIVATION_ARRAY_SIZE - 1], 0);
+    EXPECT_EQ(brain->last_activations[MAX_ADDRESSES - 1], 0);
 }
