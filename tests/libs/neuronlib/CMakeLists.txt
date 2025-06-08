@@ -11,6 +11,7 @@ endif()
 add_executable(test_neuronlib
     test_spatial_operations.cpp
     test_flow_field.cpp
+    test_neuron_population.cpp
 )
 
 target_link_libraries(test_neuronlib
