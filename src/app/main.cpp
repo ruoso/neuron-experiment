@@ -11,6 +11,13 @@
 #include <vector>
 #include <chrono>
 #include <cmath>
+#include <thread>
+#include <future>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
+#include <functional>
+#include <atomic>
 
 using namespace neuronlib;
 
@@ -56,14 +63,19 @@ private:
     BrainPtr brain_;
     ShardedMessageProcessor message_processor_;
     
+    // Threading
+    std::vector<std::thread> shard_threads_;
+    std::atomic<bool> threads_running_;
+    std::atomic<uint32_t> simulation_timestamp_;
+    
     // Timing
     std::chrono::steady_clock::time_point last_update_;
-    uint32_t simulation_timestamp_;
     
 public:
     NeuronExperimentApp() : window_(nullptr), renderer_(nullptr), running_(false), 
                            grid_(GRID_SIZE, std::vector<GridCell>(GRID_SIZE)),
                            message_processor_(10),
+                           threads_running_(false),
                            simulation_timestamp_(0) {
         
         // Initialize logging
@@ -72,10 +84,14 @@ public:
         // Initialize neural network
         initialize_brain();
         
+        // Initialize shard threads
+        initialize_shard_threads();
+        
         last_update_ = std::chrono::steady_clock::now();
     }
     
     ~NeuronExperimentApp() {
+        stop_shard_threads();
         cleanup();
     }
     
@@ -157,6 +173,57 @@ public:
         spdlog::info("  - Neural network ready for processing");
     }
     
+    void initialize_shard_threads() {
+        spdlog::info("Initializing shard processing threads...");
+        
+        threads_running_.store(true);
+        
+        // Create one thread per shard
+        for (uint32_t shard_idx = 0; shard_idx < NUM_ACTIVATION_SHARDS; ++shard_idx) {
+            shard_threads_.emplace_back([this, shard_idx]() {
+                shard_worker_loop(shard_idx);
+            });
+        }
+        
+        spdlog::info("Started {} shard processing threads", NUM_ACTIVATION_SHARDS);
+    }
+    
+    void stop_shard_threads() {
+        if (!threads_running_.load()) {
+            return;
+        }
+        
+        spdlog::info("Stopping shard processing threads...");
+        threads_running_.store(false);
+        
+        for (auto& thread : shard_threads_) {
+            if (thread.joinable()) {
+                thread.join();
+            }
+        }
+        
+        shard_threads_.clear();
+        spdlog::info("All shard threads stopped");
+    }
+    
+    void shard_worker_loop(uint32_t shard_idx) {
+        spdlog::debug("Shard {} worker thread started", shard_idx);
+        
+        auto& shard = message_processor_.get_shard(shard_idx);
+        
+        while (threads_running_.load()) {
+            uint32_t current_timestamp = simulation_timestamp_.load();
+            
+            // Process one tick for this shard
+            shard.process_tick(*brain_, current_timestamp, &message_processor_);
+            
+            // Small sleep to prevent excessive CPU usage
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+        }
+        
+        spdlog::debug("Shard {} worker thread stopped", shard_idx);
+    }
+    
     void run() {
         if (!initialize()) {
             return;
@@ -171,6 +238,8 @@ public:
             
             SDL_Delay(16); // ~60 FPS
         }
+        
+        stop_shard_threads();
     }
     
     void handle_events() {
@@ -215,12 +284,13 @@ public:
         if (elapsed.count() >= 100) {
             simulation_step();
             last_update_ = current_time;
-            simulation_timestamp_++;
+            simulation_timestamp_.fetch_add(1);
         }
     }
     
     void simulation_step() {
-        spdlog::debug("=== Simulation Step {} ===", simulation_timestamp_);
+        uint32_t current_timestamp = simulation_timestamp_.load();
+        spdlog::debug("=== Simulation Step {} ===", current_timestamp);
         
         // 1. Fade all cells by 1/4
         fade_grid();
@@ -234,7 +304,7 @@ public:
         // 4. Handle actuator outputs
         process_actuator_outputs();
         
-        spdlog::debug("Simulation step {} complete", simulation_timestamp_);
+        spdlog::debug("Simulation step {} complete", current_timestamp);
     }
     
     void fade_grid() {
@@ -296,7 +366,8 @@ public:
         }
         
         // Process sensor activations and send to neural network
-        auto targeted_activations = process_sensor_activations(brain_->sensor_grid, activations, simulation_timestamp_);
+        uint32_t current_timestamp = simulation_timestamp_.load();
+        auto targeted_activations = process_sensor_activations(brain_->sensor_grid, activations, current_timestamp);
         if (!targeted_activations.empty()) {
             spdlog::debug("Converted to {} targeted neural activations", targeted_activations.size());
             message_processor_.send_activations_to_shards(targeted_activations);
@@ -304,13 +375,9 @@ public:
     }
     
     void process_neural_network() {
-        spdlog::debug("Processing neural network with {} shards", NUM_ACTIVATION_SHARDS);
-        
-        // Process one tick for each shard
-        for (uint32_t shard_idx = 0; shard_idx < NUM_ACTIVATION_SHARDS; ++shard_idx) {
-            auto& shard = message_processor_.get_shard(shard_idx);
-            shard.process_tick(*brain_, simulation_timestamp_, &message_processor_);
-        }
+        // Neural network processing is now handled by shard threads
+        // Just update the simulation timestamp to coordinate the threads
+        spdlog::debug("Updating simulation timestamp for {} shard threads", NUM_ACTIVATION_SHARDS);
     }
     
     void process_actuator_outputs() {
