@@ -8,6 +8,7 @@ add_executable(neuron-experiment
 target_link_libraries(neuron-experiment
     neuronlib
     ${SDL2_LIBRARIES}
+    spdlog::spdlog
 )
 
 target_include_directories(neuron-experiment PRIVATE

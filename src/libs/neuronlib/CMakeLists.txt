@@ -16,4 +16,8 @@ target_include_directories(neuronlib PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+target_link_libraries(neuronlib PUBLIC
+    spdlog::spdlog
+)
+
 target_compile_features(neuronlib PUBLIC cxx_std_17)

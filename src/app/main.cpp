@@ -4,6 +4,9 @@
 #include "sensor.h"
 #include "actuator.h"
 #include "activation.h"
+#include <spdlog/spdlog.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/sinks/basic_file_sink.h>
 #include <iostream>
 #include <vector>
 #include <chrono>
@@ -63,6 +66,9 @@ public:
                            message_processor_(10),
                            simulation_timestamp_(0) {
         
+        // Initialize logging
+        initialize_logging();
+        
         // Initialize neural network
         initialize_brain();
         
@@ -73,11 +79,41 @@ public:
         cleanup();
     }
     
+    void initialize_logging() {
+        try {
+            // Create console sink with colors
+            auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+            console_sink->set_level(spdlog::level::info);
+            console_sink->set_pattern("[%H:%M:%S.%e] [%^%l%$] %v");
+            
+            // Create file sink
+            auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>("neuron_experiment.log", true);
+            file_sink->set_level(spdlog::level::debug);
+            file_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%t] %v");
+            
+            // Create logger with both sinks
+            auto logger = std::make_shared<spdlog::logger>("neuron_app", 
+                                                          spdlog::sinks_init_list{console_sink, file_sink});
+            logger->set_level(spdlog::level::debug);
+            
+            // Set as default logger
+            spdlog::set_default_logger(logger);
+            
+            spdlog::info("Logging system initialized");
+            spdlog::debug("Debug logging enabled to file: neuron_experiment.log");
+        } catch (const spdlog::spdlog_ex& ex) {
+            std::cerr << "Log initialization failed: " << ex.what() << std::endl;
+        }
+    }
+    
     bool initialize() {
+        spdlog::info("Initializing Neuron Experiment Application...");
+        
         if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-            std::cerr << "SDL initialization failed: " << SDL_GetError() << std::endl;
+            spdlog::error("SDL initialization failed: {}", SDL_GetError());
             return false;
         }
+        spdlog::debug("SDL initialized successfully");
         
         window_ = SDL_CreateWindow("Neuron Experiment",
                                  SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
@@ -85,28 +121,38 @@ public:
                                  SDL_WINDOW_SHOWN);
         
         if (!window_) {
-            std::cerr << "Window creation failed: " << SDL_GetError() << std::endl;
+            spdlog::error("Window creation failed: {}", SDL_GetError());
             return false;
         }
+        spdlog::debug("Window created: {}x{}", WINDOW_WIDTH, WINDOW_HEIGHT);
         
         renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_ACCELERATED);
         if (!renderer_) {
-            std::cerr << "Renderer creation failed: " << SDL_GetError() << std::endl;
+            spdlog::error("Renderer creation failed: {}", SDL_GetError());
             return false;
         }
+        spdlog::debug("Renderer created successfully");
         
+        spdlog::info("Application initialization complete");
         return true;
     }
     
     void initialize_brain() {
+        spdlog::info("Initializing neural network...");
+        
         // Create a simple 3D flow field
         FlowField3D flow_field(-1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f, 0.4f, 0.4f, 0.1f);
+        spdlog::debug("Flow field created: bounds=({}, {}, {}) to ({}, {}, {})", 
+                     flow_field.min_x, flow_field.min_y, flow_field.min_z,
+                     flow_field.max_x, flow_field.max_y, flow_field.max_z);
         
         // Create brain with matching sensor grid
         brain_ = populate_neuron_grid(flow_field, 1.0f, 45.0f, 0.1f, 0.5f,
                                      GRID_SIZE, GRID_SIZE, 0.3f, 0.1f, 12345);
         
-        std::cout << "Brain initialized with " << GRID_SIZE << "x" << GRID_SIZE << " sensor grid" << std::endl;
+        spdlog::info("Brain initialized successfully:");
+        spdlog::info("  - Sensor grid: {}x{} = {} sensors", GRID_SIZE, GRID_SIZE, GRID_SIZE * GRID_SIZE);
+        spdlog::info("  - Neural network ready for processing");
     }
     
     void run() {
@@ -156,6 +202,7 @@ public:
         if (grid_x >= 0 && grid_x < GRID_SIZE && grid_y >= 0 && grid_y < GRID_SIZE) {
             grid_[grid_y][grid_x].user_intensity = 1.0f;
             grid_[grid_y][grid_x].last_source = CellSource::USER;
+            spdlog::debug("User activated cell ({}, {}) at screen pos ({}, {})", grid_x, grid_y, x, y);
         }
     }
     
@@ -171,6 +218,8 @@ public:
     }
     
     void simulation_step() {
+        spdlog::debug("=== Simulation Step {} ===", simulation_timestamp_);
+        
         // 1. Fade all cells by 1/4
         fade_grid();
         
@@ -182,6 +231,8 @@ public:
         
         // 4. Handle actuator outputs
         process_actuator_outputs();
+        
+        spdlog::debug("Simulation step {} complete", simulation_timestamp_);
     }
     
     void fade_grid() {
@@ -201,6 +252,8 @@ public:
     
     void generate_sensor_activations() {
         std::vector<SensorActivation> activations;
+        int user_activations = 0;
+        int actuator_activations = 0;
         
         for (int y = 0; y < GRID_SIZE; ++y) {
             for (int x = 0; x < GRID_SIZE; ++x) {
@@ -219,11 +272,13 @@ public:
                         else if (intensity > 0.5f) mode_bitmap |= (1 << 1);   // Mode 1: Bright
                         else if (intensity > 0.25f) mode_bitmap |= (1 << 2);  // Mode 2: Medium
                         else mode_bitmap |= (1 << 3);                         // Mode 3: Dim
+                        user_activations++;
                     }
                     
                     if (cell.actuator_intensity > 0.01f) {
                         // Actuator feedback: use all 4 modes to indicate self-generated
                         mode_bitmap = 0xF; // All 4 modes active
+                        actuator_activations++;
                     }
                     
                     if (mode_bitmap != 0) {
@@ -233,12 +288,22 @@ public:
             }
         }
         
+        if (!activations.empty()) {
+            spdlog::debug("Generated {} sensor activations: {} user, {} actuator", 
+                         activations.size(), user_activations, actuator_activations);
+        }
+        
         // Process sensor activations and send to neural network
         auto targeted_activations = process_sensor_activations(brain_->sensor_grid, activations, simulation_timestamp_);
-        message_processor_.send_activations_to_shards(targeted_activations);
+        if (!targeted_activations.empty()) {
+            spdlog::debug("Converted to {} targeted neural activations", targeted_activations.size());
+            message_processor_.send_activations_to_shards(targeted_activations);
+        }
     }
     
     void process_neural_network() {
+        spdlog::debug("Processing neural network with {} shards", NUM_ACTIVATION_SHARDS);
+        
         // Process one tick for each shard
         for (uint32_t shard_idx = 0; shard_idx < NUM_ACTIVATION_SHARDS; ++shard_idx) {
             auto& shard = message_processor_.get_shard(shard_idx);
@@ -249,6 +314,10 @@ public:
     void process_actuator_outputs() {
         // Get all actuation events
         auto actuation_events = brain_->actuation_queue.pop_all();
+        
+        if (!actuation_events.empty()) {
+            spdlog::info("Processing {} actuator outputs", actuation_events.size());
+        }
         
         for (const auto& event : actuation_events) {
             // Convert world position to grid coordinates
@@ -263,13 +332,12 @@ public:
             grid_x = std::max(0, std::min(GRID_SIZE - 1, grid_x));
             grid_y = std::max(0, std::min(GRID_SIZE - 1, grid_y));
             
+            spdlog::debug("Actuator event: world_pos=({:.2f}, {:.2f}, {:.2f}) -> grid=({}, {})", 
+                         event.position.x, event.position.y, event.position.z, grid_x, grid_y);
+            
             // Set actuator intensity
             grid_[grid_y][grid_x].actuator_intensity = 1.0f;
             grid_[grid_y][grid_x].last_source = CellSource::ACTUATOR;
-        }
-        
-        if (!actuation_events.empty()) {
-            std::cout << "Processed " << actuation_events.size() << " actuation events" << std::endl;
         }
     }
     
