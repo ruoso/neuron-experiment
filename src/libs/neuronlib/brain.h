@@ -4,6 +4,8 @@
 #include "spatial.h"
 #include "neuron.h"
 #include "sensor.h"
+#include "actuator.h"
+#include "activation.h"
 #include <cstdint>
 #include <memory>
 
@@ -19,6 +21,7 @@ struct Brain {
     uint32_t last_activations[ACTIVATION_ARRAY_SIZE];
     Neuron neurons[MAX_NEURONS];
     SensorGrid sensor_grid;
+    ActuationQueue actuation_queue;
     
     Brain();
     

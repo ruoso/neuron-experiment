@@ -1,4 +1,5 @@
 #include "activation.h"
+#include "actuator.h"
 #include "dendrite.h"
 #include <cmath>
 #include <algorithm>
@@ -107,7 +108,14 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
                 uint32_t neuron_index = neuron_address >> 12;
                 
                 if (neuron_index < MAX_NEURONS && total_input >= brain.neurons[neuron_index].threshold) {
-                    // Neuron fires - send activations to its output targets
+                    // Neuron fires - check if it's an actuator
+                    if (brain.neurons[neuron_index].is_actuator) {
+                        // Generate actuation event
+                        ActuationEvent actuation_event(brain.neurons[neuron_index].position, current_timestamp);
+                        brain.actuation_queue.push(actuation_event);
+                    }
+                    
+                    // Send activations to its output targets
                     for (size_t i = 0; i < MAX_OUTPUT_TARGETS; ++i) {
                         uint32_t output_target = brain.neurons[neuron_index].output_targets[i];
                         if (output_target != 0) {
@@ -199,6 +207,33 @@ float get_decayed_activation(uint32_t last_activation_time, uint32_t current_tim
     
     uint32_t time_diff = current_time - last_activation_time;
     return std::pow(decay_rate, static_cast<float>(time_diff));
+}
+
+void ActuationQueue::push(const ActuationEvent& event) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    queue_.push(event);
+}
+
+void ActuationQueue::push_batch(const std::vector<ActuationEvent>& events) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& event : events) {
+        queue_.push(event);
+    }
+}
+
+std::vector<ActuationEvent> ActuationQueue::pop_all() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<ActuationEvent> result;
+    while (!queue_.empty()) {
+        result.push_back(queue_.front());
+        queue_.pop();
+    }
+    return result;
+}
+
+bool ActuationQueue::empty() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return queue_.empty();
 }
 
 } // namespace neuronlib

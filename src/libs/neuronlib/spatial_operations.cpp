@@ -1,5 +1,6 @@
 #include "spatial_operations.h"
 #include "sensor.h"
+#include "actuator.h"
 #include <memory>
 #include <array>
 #include <algorithm>
@@ -294,6 +295,67 @@ std::vector<FrustumSearchResult> search_frustum(SpatialGridPtr grid, const Frust
     return results;
 }
 
+static bool point_in_bounding_box(const Vec3& point,
+                                 float min_x, float min_y, float min_z,
+                                 float max_x, float max_y, float max_z) {
+    return point.x >= min_x && point.x <= max_x &&
+           point.y >= min_y && point.y <= max_y &&
+           point.z >= min_z && point.z <= max_z;
+}
+
+static bool bounding_box_intersects_aabb(float search_min_x, float search_min_y, float search_min_z,
+                                        float search_max_x, float search_max_y, float search_max_z,
+                                        float aabb_min_x, float aabb_min_y, float aabb_min_z,
+                                        float aabb_max_x, float aabb_max_y, float aabb_max_z) {
+    return search_min_x <= aabb_max_x && search_max_x >= aabb_min_x &&
+           search_min_y <= aabb_max_y && search_max_y >= aabb_min_y &&
+           search_min_z <= aabb_max_z && search_max_z >= aabb_min_z;
+}
+
+static void search_bounding_box_recursive(SpatialNodePtr node,
+                                         float min_x, float min_y, float min_z,
+                                         float max_x, float max_y, float max_z,
+                                         std::vector<BoundingBoxSearchResult>& results) {
+    if (!node) return;
+    
+    if (std::holds_alternative<SpatialLeaf>(*node)) {
+        const auto& leaf = std::get<SpatialLeaf>(*node);
+        for (const auto& item : leaf.items) {
+            if (point_in_bounding_box(item.position, min_x, min_y, min_z, max_x, max_y, max_z)) {
+                results.emplace_back(item.item_address, item.position);
+            }
+        }
+    } else if (std::holds_alternative<SpatialBranch>(*node)) {
+        const auto& branch = std::get<SpatialBranch>(*node);
+        
+        // Early exit if branch doesn't intersect with search bounding box
+        if (!bounding_box_intersects_aabb(min_x, min_y, min_z, max_x, max_y, max_z,
+                                         branch.min_x, branch.min_y, branch.min_z,
+                                         branch.max_x, branch.max_y, branch.max_z)) {
+            return;
+        }
+        
+        // Recursively check children
+        for (int i = 0; i < 8; ++i) {
+            search_bounding_box_recursive(branch.children[i], min_x, min_y, min_z, max_x, max_y, max_z, results);
+        }
+    }
+}
+
+std::vector<BoundingBoxSearchResult> search_bounding_box(SpatialGridPtr grid,
+                                                        float min_x, float min_y, float min_z,
+                                                        float max_x, float max_y, float max_z) {
+    std::vector<BoundingBoxSearchResult> results;
+    
+    if (!grid || !grid->root) {
+        return results;
+    }
+    
+    search_bounding_box_recursive(grid->root, min_x, min_y, min_z, max_x, max_y, max_z, results);
+    
+    return results;
+}
+
 static Vec3 normalize_vector(const Vec3& v) {
     float magnitude = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
     if (magnitude == 0.0f) {
@@ -421,6 +483,7 @@ BrainPtr populate_neuron_grid(
     uint32_t sensor_grid_width,
     uint32_t sensor_grid_height,
     float sensor_connection_radius,
+    float actuator_z_threshold,
     uint32_t random_seed) {
     
     // Create brain
@@ -510,6 +573,9 @@ BrainPtr populate_neuron_grid(
     // Assign dendrites to sensor modes
     assign_dendrites_to_sensors(brain->sensor_grid, *brain, 
                                sensor_connection_radius, random_seed + 999999);
+    
+    // Mark actuator neurons
+    mark_actuator_neurons(*brain, actuator_z_threshold);
     
     return brain;
 }

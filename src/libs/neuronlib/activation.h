@@ -41,6 +41,18 @@ private:
     std::queue<TargetedActivation> queue_;
 };
 
+class ActuationQueue {
+public:
+    void push(const struct ActuationEvent& event);
+    void push_batch(const std::vector<struct ActuationEvent>& events);
+    std::vector<struct ActuationEvent> pop_all();
+    bool empty() const;
+    
+private:
+    mutable std::mutex mutex_;
+    std::queue<struct ActuationEvent> queue_;
+};
+
 class ActivationShard {
 public:
     ActivationShard(uint32_t timing_window = 10);

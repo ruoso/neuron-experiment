@@ -8,6 +8,7 @@ add_library(neuronlib
     brain.cpp
     activation.cpp
     sensor.cpp
+    actuator.cpp
 )
 
 target_include_directories(neuronlib PUBLIC

@@ -27,6 +27,18 @@ SpatialGridPtr insert_batch(SpatialGridPtr grid, const std::vector<SpatialInsert
 
 std::vector<FrustumSearchResult> search_frustum(SpatialGridPtr grid, const Frustum3D& frustum);
 
+struct BoundingBoxSearchResult {
+    uint32_t item_address;
+    Vec3 position;
+    
+    BoundingBoxSearchResult() : item_address(0), position{0, 0, 0} {}
+    BoundingBoxSearchResult(uint32_t addr, const Vec3& pos) : item_address(addr), position(pos) {}
+};
+
+std::vector<BoundingBoxSearchResult> search_bounding_box(SpatialGridPtr grid,
+                                                        float min_x, float min_y, float min_z,
+                                                        float max_x, float max_y, float max_z);
+
 struct DendriteTerminalPosition {
     uint32_t terminal_address;
     Vec3 position;
@@ -53,6 +65,7 @@ BrainPtr populate_neuron_grid(
     uint32_t sensor_grid_width = 32,
     uint32_t sensor_grid_height = 32,
     float sensor_connection_radius = 0.3f,
+    float actuator_z_threshold = 0.1f,
     uint32_t random_seed = 12345);
 
 } // namespace neuronlib

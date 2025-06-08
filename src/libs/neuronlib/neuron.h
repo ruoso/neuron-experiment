@@ -13,6 +13,7 @@ struct Neuron {
     Vec3 output_direction;
     float threshold;
     uint32_t output_targets[MAX_OUTPUT_TARGETS];
+    bool is_actuator;
 };
 
 } // namespace neuronlib
