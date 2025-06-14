@@ -78,16 +78,31 @@ private:
     
     // Visualization
     std::vector<NeuronFiringEvent> recent_firings_;  // Thread-safe accumulator
-    std::vector<NeuronFiringEvent> local_firings_;   // Local processing copy
     std::mutex firing_mutex_;
     
     // Timing
     std::chrono::steady_clock::time_point last_update_;
     
+    // Z-coordinate tracking for chart
+    static constexpr int CHART_HISTORY_SIZE = 50;  // 5 seconds at 100ms intervals
+    static constexpr int Z_BINS = 20;              // Number of Z-coordinate bins
+    std::vector<std::vector<int>> z_distribution_history_;  // [time_index][z_bin]
+    int current_history_index_;
+    std::chrono::steady_clock::time_point last_chart_update_;
+    
+    // 3D visualization time bins for fading effect
+    static constexpr int FIRING_TIME_BINS = 10;     // 10 bins for 1 second at 100ms intervals
+    std::vector<std::vector<Vec3>> firing_time_bins_;  // [time_bin][positions]
+    int current_firing_bin_;
+    
 public:
     NeuronExperimentApp() : window_(nullptr), renderer_(nullptr), viz_window_(nullptr), viz_renderer_(nullptr),
                            running_(false), grid_(GRID_SIZE, std::vector<GridCell>(GRID_SIZE)),
-                           message_processor_(10), threads_running_(false), simulation_timestamp_(0) {
+                           message_processor_(10), threads_running_(false), simulation_timestamp_(0),
+                           z_distribution_history_(CHART_HISTORY_SIZE, std::vector<int>(Z_BINS, 0)),
+                           current_history_index_(0),
+                           firing_time_bins_(FIRING_TIME_BINS),
+                           current_firing_bin_(0) {
         
         // Initialize logging
         initialize_logging();
@@ -107,6 +122,7 @@ public:
         initialize_shard_threads();
         
         last_update_ = std::chrono::steady_clock::now();
+        last_chart_update_ = std::chrono::steady_clock::now();
     }
     
     ~NeuronExperimentApp() {
@@ -185,6 +201,10 @@ public:
             spdlog::error("Visualization renderer creation failed: {}", SDL_GetError());
             return false;
         }
+        
+        // Enable alpha blending for visualization renderer
+        SDL_SetRenderDrawBlendMode(viz_renderer_, SDL_BLENDMODE_BLEND);
+        
         spdlog::debug("Visualization renderer created successfully");
         
         spdlog::info("Application initialization complete");
@@ -202,7 +222,7 @@ public:
         
         // Create brain with matching sensor grid
         brain_ = populate_neuron_grid(flow_field, 1.0f, 45.0f, 0.1f, 0.5f,
-                                     GRID_SIZE, GRID_SIZE, 0.3f, 0.1f, 12345);
+                                     GRID_SIZE, GRID_SIZE, 0.3f, 0.3f, 12345);
         
         spdlog::info("Brain initialized successfully:");
         spdlog::info("  - Addressing: {} neuron bits, {} dendrite bits = {} max neurons", 
@@ -274,6 +294,84 @@ public:
             static_cast<uint8_t>((g) * 255),
             static_cast<uint8_t>((b) * 255)
         };
+    }
+    
+    void render_z_chart() {
+        constexpr int CHART_WIDTH = 300;
+        constexpr int CHART_HEIGHT = 150;
+        constexpr int CHART_X = VIZ_WINDOW_WIDTH - CHART_WIDTH - 20;
+        constexpr int CHART_Y = 20;
+        
+        // Draw chart background
+        SDL_SetRenderDrawColor(viz_renderer_, 40, 40, 40, 200);
+        SDL_Rect chart_bg = {CHART_X - 10, CHART_Y - 10, CHART_WIDTH + 20, CHART_HEIGHT + 20};
+        SDL_RenderFillRect(viz_renderer_, &chart_bg);
+        
+        // Draw chart border
+        SDL_SetRenderDrawColor(viz_renderer_, 100, 100, 100, 255);
+        SDL_RenderDrawRect(viz_renderer_, &chart_bg);
+        
+        // Find maximum total activations across all time slots for scaling
+        int max_total_activations = 1;
+        for (int t = 0; t < CHART_HISTORY_SIZE; ++t) {
+            int total_for_time_slot = 0;
+            for (int z = 0; z < Z_BINS; ++z) {
+                total_for_time_slot += z_distribution_history_[t][z];
+            }
+            max_total_activations = std::max(max_total_activations, total_for_time_slot);
+        }
+        
+        // Draw time series as stacked bars
+        int bar_width = CHART_WIDTH / CHART_HISTORY_SIZE;
+        for (int t = 0; t < CHART_HISTORY_SIZE; ++t) {
+            int time_index = (current_history_index_ + t + 1) % CHART_HISTORY_SIZE;
+            int x = CHART_X + t * bar_width;
+            
+            int y_offset = 0;
+            for (int z = 0; z < Z_BINS; ++z) {
+                int count = z_distribution_history_[time_index][z];
+                if (count > 0) {
+                    // Scale each individual bin relative to the maximum total activations
+                    int bar_height = (count * CHART_HEIGHT) / max_total_activations;
+                    
+                    // Color based on Z position using existing depth_to_color function
+                    float z_position = (static_cast<float>(z) / (Z_BINS - 1)) * 2.0f - 1.0f;  // Convert bin to -1.0 to +1.0
+                    Color bin_color = depth_to_color(z_position);
+                    SDL_SetRenderDrawColor(viz_renderer_, bin_color.r, bin_color.g, bin_color.b, 255);
+                    
+                    SDL_Rect bar = {x, CHART_Y + CHART_HEIGHT - y_offset - bar_height, 
+                                   bar_width - 1, bar_height};
+                    SDL_RenderFillRect(viz_renderer_, &bar);
+                    
+                    y_offset += bar_height;
+                }
+            }
+        }
+        
+        // Draw labels
+        SDL_SetRenderDrawColor(viz_renderer_, 200, 200, 200, 255);
+        // Title area (just draw a simple line for now)
+        SDL_RenderDrawLine(viz_renderer_, CHART_X, CHART_Y - 5, CHART_X + CHART_WIDTH, CHART_Y - 5);
+    }
+    
+    void update_z_chart() {
+        // Move to next time slot
+        current_history_index_ = (current_history_index_ + 1) % CHART_HISTORY_SIZE;
+        
+        // Clear current time slot
+        std::fill(z_distribution_history_[current_history_index_].begin(), 
+                 z_distribution_history_[current_history_index_].end(), 0);
+    }
+    
+    void update_firing_bins() {
+        // Shift all bins down by one (oldest bin is discarded)
+        for (int i = FIRING_TIME_BINS - 1; i > 0; --i) {
+            firing_time_bins_[i] = std::move(firing_time_bins_[i - 1]);
+        }
+        
+        // Clear the newest bin (index 0)
+        firing_time_bins_[0].clear();
+        current_firing_bin_ = 0;  // Always add to bin 0 (newest)
     }
     
     void initialize_shard_threads() {
@@ -384,12 +482,19 @@ public:
     void update() {
         auto current_time = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - last_update_);
+        auto chart_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - last_chart_update_);
         
         if (elapsed.count() >= 100) {
             simulation_step();
             last_update_ = current_time;
             simulation_timestamp_.fetch_add(1);
             spdlog::debug("Simulation step completed, timestamp: {}", simulation_timestamp_.load());
+        }
+        
+        if (chart_elapsed.count() >= 100) {
+            update_z_chart();
+            update_firing_bins();
+            last_chart_update_ = current_time;
         }
     }
     
@@ -517,27 +622,22 @@ public:
         SDL_SetRenderDrawColor(viz_renderer_, 0, 0, 0, 255);
         SDL_RenderClear(viz_renderer_);
                 
-        // Move recent firings to local for processing
+        // Move recent firings to local for processing, update chart, and store in time bins
         {
             std::lock_guard<std::mutex> lock(firing_mutex_);
-            for (const auto& event : recent_firings_) {
-                local_firings_.push_back(event);
+            for (const auto& event : recent_firings_) {                
+                // Add to current Z-coordinate distribution
+                float z_norm = (event.position.z + 1.0f) / 2.0f;  // 0.0 to 1.0
+                int bin = static_cast<int>(z_norm * Z_BINS);
+                bin = std::max(0, std::min(Z_BINS - 1, bin));
+                z_distribution_history_[current_history_index_][bin]++;
+                
+                // Store position in current firing time bin
+                firing_time_bins_[current_firing_bin_].push_back(event.position);
             }
             recent_firings_.clear();
         }
-        
-        // Filter out old firings from local copy
-        auto current_timestamp = simulation_timestamp_.load();
-        local_firings_.erase(
-            std::remove_if(local_firings_.begin(), local_firings_.end(),
-                [current_timestamp](const NeuronFiringEvent& firing) {
-                    return (current_timestamp - firing.timestamp) > 10;
-                }), 
-            local_firings_.end()
-        );
-        
-        std::vector<NeuronFiringEvent> valid_firings = local_firings_;
-        
+                
         // Draw sensors (at bottom of space)
         SDL_SetRenderDrawColor(viz_renderer_, 0, 100, 255, 255); // Blue for sensors
         for (uint32_t sensor_idx = 0; sensor_idx < GRID_SIZE * GRID_SIZE; ++sensor_idx) {
@@ -582,28 +682,36 @@ public:
             }
         }
         
-        // Draw recent neuron firings with fading effect and depth-based coloring
-        for (const auto& firing : valid_firings) {
-            float alpha = 1.0f - ((current_timestamp - firing.timestamp) / 10.0f);
+        // Draw neuron firings from time bins with fading effect
+        for (int bin_index = 0; bin_index < FIRING_TIME_BINS; ++bin_index) {
+            const auto& positions = firing_time_bins_[bin_index];
+            
+            // Calculate alpha based on age (bin 0 = newest, bin 9 = oldest)
+            float alpha = 1.0f - (static_cast<float>(bin_index) / FIRING_TIME_BINS);
             if (alpha <= 0.0f) continue;
             
-            IsometricPoint iso_point = project_to_isometric(firing.position);
-            
-            // Get depth-based color (blue for sensors, red for actuators)
-            Color firing_color = depth_to_color(firing.position.z);
-            SDL_SetRenderDrawColor(viz_renderer_, firing_color.r, firing_color.g, firing_color.b, static_cast<uint8_t>(alpha * 255));
-            
-            int radius = 5;
-            for (int y = -radius; y <= radius; ++y) {
-                for (int x = -radius; x <= radius; ++x) {
-                    if (x*x + y*y <= radius*radius) {
-                        SDL_RenderDrawPoint(viz_renderer_, 
-                                           static_cast<int>(iso_point.x) + x,
-                                           static_cast<int>(iso_point.y) + y);
+            for (const auto& position : positions) {
+                IsometricPoint iso_point = project_to_isometric(position);
+                
+                // Get depth-based color (blue for sensors, red for actuators)
+                Color firing_color = depth_to_color(position.z);
+                SDL_SetRenderDrawColor(viz_renderer_, firing_color.r, firing_color.g, firing_color.b, static_cast<uint8_t>(alpha * 255));
+                
+                int radius = 5;
+                for (int y = -radius; y <= radius; ++y) {
+                    for (int x = -radius; x <= radius; ++x) {
+                        if (x*x + y*y <= radius*radius) {
+                            SDL_RenderDrawPoint(viz_renderer_, 
+                                               static_cast<int>(iso_point.x) + x,
+                                               static_cast<int>(iso_point.y) + y);
+                        }
                     }
                 }
             }
         }
+        
+        // Draw the Z-coordinate chart
+        render_z_chart();
         
         SDL_RenderPresent(viz_renderer_);
     }

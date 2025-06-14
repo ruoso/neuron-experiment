@@ -17,7 +17,7 @@ Vec3 evaluate_flow_field(const FlowField3D& field, const Vec3& position) {
         return {0.0f, 0.0f, 1.0f};
     }
     
-    // Middle section: circular flow
+    // Middle section: circular flow with output bias
     // Calculate center of the middle section
     float center_x = (field.min_x + field.max_x) * 0.5f;
     float center_y = (field.min_y + field.max_y) * 0.5f;
@@ -39,8 +39,12 @@ Vec3 evaluate_flow_field(const FlowField3D& field, const Vec3& position) {
         flow_y /= magnitude;
     }
     
-    // Small positive Z component to maintain forward progress
-    return {flow_x, flow_y, 0.1f};
+    // Progressive bias towards output: stronger Z component as we approach output
+    float middle_section_length = output_section_start - input_section_end;
+    float progress = (position.z - input_section_end) / middle_section_length;
+    float z_bias = 0.1f + (0.9f * progress);  // Ranges from 0.1 to 0.5
+    
+    return {flow_x, flow_y, z_bias};
 }
 
 } // namespace neuronlib
