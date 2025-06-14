@@ -202,7 +202,7 @@ public:
         
         // Create brain with matching sensor grid
         brain_ = populate_neuron_grid(flow_field, 1.0f, 45.0f, 0.1f, 0.5f,
-                                     GRID_SIZE, GRID_SIZE, 0.3f, 0.2f, 12345);
+                                     GRID_SIZE, GRID_SIZE, 0.3f, 0.1f, 12345);
         
         spdlog::info("Brain initialized successfully:");
         spdlog::info("  - Addressing: {} neuron bits, {} dendrite bits = {} max neurons", 
@@ -233,6 +233,47 @@ public:
         float y2 = y1 * cos_x - z1 * sin_x;
         
         return {center_x + x2 * scale, center_y - y2 * scale};
+    }
+    
+    struct Color {
+        uint8_t r, g, b;
+    };
+    
+    Color depth_to_color(float z_position) {
+        // Convert Z position (-1.0 to +1.0) to hue (blue to red)
+        // Sensors at z=-1.0 (front) = blue (240°)
+        // Actuators at z=+1.0 (back) = red (0°)
+        float normalized_depth = (z_position + 1.0f) / 2.0f;  // 0.0 to 1.0
+        float hue = 240.0f * (1.0f - normalized_depth);  // 240° to 0°
+        
+        // HSV to RGB conversion with full saturation and value
+        float saturation = 1.0f;
+        float value = 1.0f;
+        
+        float c = value * saturation;
+        float h_prime = hue / 60.0f;
+        float x = c * (1.0f - std::abs(std::fmod(h_prime, 2.0f) - 1.0f));
+        
+        float r, g, b;
+        if (h_prime >= 0.0f && h_prime < 1.0f) {
+            r = c; g = x; b = 0.0f;
+        } else if (h_prime >= 1.0f && h_prime < 2.0f) {
+            r = x; g = c; b = 0.0f;
+        } else if (h_prime >= 2.0f && h_prime < 3.0f) {
+            r = 0.0f; g = c; b = x;
+        } else if (h_prime >= 3.0f && h_prime < 4.0f) {
+            r = 0.0f; g = x; b = c;
+        } else if (h_prime >= 4.0f && h_prime < 5.0f) {
+            r = x; g = 0.0f; b = c;
+        } else {
+            r = c; g = 0.0f; b = x;
+        }
+        
+        return {
+            static_cast<uint8_t>((r) * 255),
+            static_cast<uint8_t>((g) * 255),
+            static_cast<uint8_t>((b) * 255)
+        };
     }
     
     void initialize_shard_threads() {
@@ -541,15 +582,16 @@ public:
             }
         }
         
-        // Draw recent neuron firings with fading effect
+        // Draw recent neuron firings with fading effect and depth-based coloring
         for (const auto& firing : valid_firings) {
             float alpha = 1.0f - ((current_timestamp - firing.timestamp) / 10.0f);
             if (alpha <= 0.0f) continue;
             
             IsometricPoint iso_point = project_to_isometric(firing.position);
             
-            // Draw firing as bright yellow circle with fade
-            SDL_SetRenderDrawColor(viz_renderer_, 255, 255, 0, static_cast<uint8_t>(alpha * 255));
+            // Get depth-based color (blue for sensors, red for actuators)
+            Color firing_color = depth_to_color(firing.position.z);
+            SDL_SetRenderDrawColor(viz_renderer_, firing_color.r, firing_color.g, firing_color.b, static_cast<uint8_t>(alpha * 255));
             
             int radius = 5;
             for (int y = -radius; y <= radius; ++y) {

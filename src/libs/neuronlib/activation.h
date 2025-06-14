@@ -26,7 +26,7 @@ struct Activation {
     Activation(float val, uint32_t time) : value(val), timestamp(time) {}
 };
 
-constexpr size_t NUM_ACTIVATION_SHARDS = 256;
+constexpr size_t NUM_ACTIVATION_SHARDS = 8;
 
 struct TargetedActivation {
     uint32_t target_address;
