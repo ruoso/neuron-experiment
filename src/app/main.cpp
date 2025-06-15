@@ -85,15 +85,10 @@ private:
     
     // Neural network
     BrainPtr brain_;
-    ShardedMessageProcessor message_processor_;
+    MessageProcessor message_processor_;
     
-    // Threading
-    std::vector<std::thread> shard_threads_;
-    std::atomic<bool> threads_running_;
+    // Timing
     std::atomic<uint32_t> simulation_timestamp_;
-    
-    // Synchronization for shard processing
-    std::array<std::atomic<bool>, NUM_ACTIVATION_SHARDS> shard_completed_;
     
     // Performance monitoring
     std::chrono::steady_clock::time_point last_timestamp_time_;
@@ -127,10 +122,23 @@ private:
     uint32_t next_scheduled_activation_;
     int current_schedule_point_;
     
+    // Threading
+    std::thread simulation_thread_;
+    std::atomic<bool> simulation_running_;
+    std::mutex grid_mutex_;
+    
+    // User input queue for thread communication
+    struct UserInput {
+        int grid_x, grid_y;
+        uint32_t timestamp;
+    };
+    std::queue<UserInput> user_input_queue_;
+    std::mutex user_input_mutex_;
+    
 public:
     NeuronExperimentApp() : window_(nullptr), renderer_(nullptr), viz_window_(nullptr), viz_renderer_(nullptr),
                            running_(false), grid_(GRID_SIZE, std::vector<GridCell>(GRID_SIZE)),
-                           message_processor_(10), threads_running_(false), simulation_timestamp_(1),
+                           message_processor_(10), simulation_timestamp_(1),
                            z_distribution_history_(CHART_HISTORY_SIZE, std::vector<int>(Z_BINS, 0)),
                            sensor_activation_history_(CHART_HISTORY_SIZE, 0),
                            max_z_history_(CHART_HISTORY_SIZE, -2.0f),
@@ -138,7 +146,8 @@ public:
                            firing_time_bins_(FIRING_TIME_BINS),
                            current_firing_bin_(0),
                            next_scheduled_activation_(SCHEDULE_INTERVAL),
-                           current_schedule_point_(0) {
+                           current_schedule_point_(0),
+                           simulation_running_(false) {
         
         // Initialize logging
         initialize_logging();
@@ -154,20 +163,12 @@ public:
             }
         });
         
-        // Initialize shard completion flags - start as false so timestamp 1 can be processed
-        for (auto& completed : shard_completed_) {
-            completed.store(false);
-        }
-        
-        // Initialize shard threads
-        initialize_shard_threads();
-        
         last_update_ = std::chrono::steady_clock::now();
         last_timestamp_time_ = std::chrono::steady_clock::now();
     }
     
     ~NeuronExperimentApp() {
-        stop_shard_threads();
+        stop_simulation();
         cleanup();
     }
     
@@ -518,15 +519,6 @@ public:
         );
     }
     
-    bool all_shards_completed() {
-        for (const auto& completed : shard_completed_) {
-            if (!completed.load()) {
-                return false;
-            }
-        }
-        return true;
-    }
-    
     void advance_timestamp() {
         auto current_time = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - last_timestamp_time_);
@@ -541,11 +533,6 @@ public:
         // Update charts synchronized with simulation timestamps
         update_z_chart();
         update_firing_bins();
-        
-        // Reset all shard completion flags for next timestamp
-        for (auto& completed : shard_completed_) {
-            completed.store(false);
-        }
         
         last_timestamp_time_ = current_time;
     }
@@ -588,111 +575,73 @@ public:
         }
     }
     
-    void initialize_shard_threads() {
-        spdlog::info("Initializing shard processing threads...");
-        
-        threads_running_.store(true);
-        
-        // Get main thread's current CPU to avoid using it for shards
-        cpu_set_t main_cpuset;
-        CPU_ZERO(&main_cpuset);
-        int main_core = -1;
-        if (pthread_getaffinity_np(pthread_self(), sizeof(cpu_set_t), &main_cpuset) == 0) {
-            // Find the first CPU the main thread is using
-            for (int i = 0; i < CPU_SETSIZE; ++i) {
-                if (CPU_ISSET(i, &main_cpuset)) {
-                    main_core = i;
-                    break;
-                }
-            }
-        }
-        
-        // Create one thread per shard with CPU affinity
-        for (uint32_t shard_idx = 0; shard_idx < NUM_ACTIVATION_SHARDS; ++shard_idx) {
-            shard_threads_.emplace_back([this, shard_idx, main_core]() {
-                // Set thread affinity to spread across cores
-                cpu_set_t cpuset;
-                CPU_ZERO(&cpuset);
-                
-                // Get number of available cores
-                int num_cores = std::thread::hardware_concurrency();
-                if (num_cores > 1) {  // Need at least 2 cores to avoid main thread
-                    // Distribute threads across cores, avoiding main thread's core
-                    int target_core = shard_idx;
-                    if (main_core >= 0) {
-                        // Skip the main core by mapping shard indices to available cores
-                        int available_cores = num_cores - 1;
-                        target_core = shard_idx % available_cores;
-                        if (target_core >= main_core) {
-                            target_core++;  // Skip over main core
-                        }
-                    } else {
-                        target_core = (shard_idx + 1) % num_cores;  // Fallback: skip core 0
-                    }
-                    
-                    CPU_SET(target_core, &cpuset);
-                    
-                    int result = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
-                    if (result == 0) {
-                        spdlog::debug("Shard {} thread bound to CPU core {} (avoiding main core {})", 
-                                     shard_idx, target_core, main_core);
-                    } else {
-                        spdlog::warn("Failed to set CPU affinity for shard {} thread: {}", shard_idx, strerror(result));
-                    }
-                }
-                
-                shard_worker_loop(shard_idx);
-            });
-        }
-        
-        spdlog::info("Started {} shard processing threads (avoiding main thread core {})", 
-                     NUM_ACTIVATION_SHARDS, main_core);
+    void start_simulation() {
+        simulation_running_.store(true);
+        simulation_thread_ = std::thread(&NeuronExperimentApp::simulation_loop, this);
+        spdlog::info("Simulation thread started");
     }
     
-    void stop_shard_threads() {
-        if (!threads_running_.load()) {
-            return;
-        }
-        
-        spdlog::info("Stopping shard processing threads...");
-        threads_running_.store(false);
-        
-        for (auto& thread : shard_threads_) {
-            if (thread.joinable()) {
-                thread.join();
+    void stop_simulation() {
+        if (simulation_running_.load()) {
+            simulation_running_.store(false);
+            if (simulation_thread_.joinable()) {
+                simulation_thread_.join();
             }
+            spdlog::info("Simulation thread stopped");
         }
-        
-        shard_threads_.clear();
-        spdlog::info("All shard threads stopped");
     }
     
-    void shard_worker_loop(uint32_t shard_idx) {
-        spdlog::debug("Shard {} worker thread started", shard_idx);
+    void simulation_loop() {
+        spdlog::info("Simulation loop started");
         
-        auto& shard = message_processor_.get_shard(shard_idx);
-        uint32_t last_processed_timestamp = 0;
-        
-        while (threads_running_.load()) {
-            uint32_t current_timestamp = simulation_timestamp_.load();
+        while (simulation_running_.load()) {
+            {
+                std::lock_guard<std::mutex> grid_lock(grid_mutex_);
+                
+                // Process any pending user input
+                process_user_input_queue();
+                
+                // Run simulation step
+                simulation_step();
+                
+                // Process neural network
+                message_processor_.process_tick(*brain_, simulation_timestamp_.load());
+                
+                // Advance timestamp
+                advance_timestamp();
+            }
             
-            // Only process if we haven't processed this timestamp yet
-            if (current_timestamp > last_processed_timestamp) {
-                // Process one tick for this shard
-                shard.process_tick(*brain_, current_timestamp, &message_processor_);
-                
-                // Mark this shard as completed for this timestamp
-                shard_completed_[shard_idx].store(true);
-                last_processed_timestamp = current_timestamp;
-                //spdlog::info("Shard {} completed timestamp {}", shard_idx, current_timestamp);
-            } else {
-                // Small sleep to prevent excessive CPU usage when waiting
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
+            // Add small delay to prevent burning CPU
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         
-        spdlog::debug("Shard {} worker thread stopped", shard_idx);
+        spdlog::info("Simulation loop ended");
     }
+    
+    void process_user_input_queue() {
+        std::lock_guard<std::mutex> input_lock(user_input_mutex_);
+        
+        while (!user_input_queue_.empty()) {
+            const auto& input = user_input_queue_.front();
+            
+            grid_[input.grid_y][input.grid_x].user_intensity = 1.0f;
+            grid_[input.grid_y][input.grid_x].last_source = CellSource::USER;
+            grid_[input.grid_y][input.grid_x].activation_sent = false;
+            
+            // Create ripple effect
+            active_ripples_.emplace_back(input.grid_x, input.grid_y, CellSource::USER, input.timestamp);
+            
+            spdlog::debug("Processed user input: grid=({}, {})", input.grid_x, input.grid_y);
+            
+            user_input_queue_.pop();
+        }
+    }
+    
+    void queue_user_input(int grid_x, int grid_y) {
+        std::lock_guard<std::mutex> input_lock(user_input_mutex_);
+        user_input_queue_.push({grid_x, grid_y, simulation_timestamp_.load()});
+    }
+    
     
     void run() {
         if (!initialize()) {
@@ -701,16 +650,19 @@ public:
         
         running_ = true;
         
+        // Start simulation thread
+        start_simulation();
+        
         while (running_) {
             handle_events();
-            update();
             render();
             render_visualization();
             
             SDL_Delay(16); // ~60 FPS
         }
         
-        stop_shard_threads();
+        // Stop simulation thread
+        stop_simulation();
     }
     
     void handle_events() {
@@ -742,25 +694,11 @@ public:
         int grid_y = (y - GRID_OFFSET_Y) / CELL_SIZE;
         
         if (grid_x >= 0 && grid_x < GRID_SIZE && grid_y >= 0 && grid_y < GRID_SIZE) {
-            grid_[grid_y][grid_x].user_intensity = 1.0f;
-            grid_[grid_y][grid_x].last_source = CellSource::USER;
-            grid_[grid_y][grid_x].activation_sent = false;  // Reset to allow new activation
-            
-            // Create ripple effect
-            active_ripples_.emplace_back(grid_x, grid_y, CellSource::USER, simulation_timestamp_.load());
-            
-            spdlog::debug("User activated cell ({}, {}) at screen pos ({}, {})", grid_x, grid_y, x, y);
+            queue_user_input(grid_x, grid_y);
+            spdlog::debug("User clicked cell ({}, {}) at screen pos ({}, {})", grid_x, grid_y, x, y);
         }
     }
     
-    void update() {
-        // Wait for all shards to complete current timestamp before advancing
-        if (all_shards_completed()) {
-            simulation_step();
-            advance_timestamp();
-            spdlog::debug("Simulation step completed, timestamp: {}", simulation_timestamp_.load());
-        }
-    }
     
     void simulation_step() {
         uint32_t current_timestamp = simulation_timestamp_.load();
@@ -840,7 +778,7 @@ public:
         if (!targeted_activations.empty()) {
             spdlog::debug("Generated {} sensor activations -> {} targeted activations", 
                          activations.size(), targeted_activations.size());
-            message_processor_.send_activations_to_shards(targeted_activations);
+            message_processor_.send_activations(targeted_activations);
         } else if (!activations.empty()) {
             spdlog::debug("Generated {} sensor activations but no targeted activations", activations.size());
         }

@@ -18,6 +18,12 @@ target_include_directories(neuronlib PUBLIC
 
 target_link_libraries(neuronlib PUBLIC
     spdlog::spdlog
+    CUDA::cudart
 )
 
 target_compile_features(neuronlib PUBLIC cxx_std_17)
+
+# Add GPU acceleration module
+add_subdirectory(gpu)
+target_link_libraries(neuronlib PUBLIC ${NEURONLIB_GPU_TARGET})
+target_compile_definitions(neuronlib PUBLIC NEURONLIB_GPU_ENABLED)
