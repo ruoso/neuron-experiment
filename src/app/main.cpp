@@ -92,6 +92,12 @@ private:
     std::atomic<bool> threads_running_;
     std::atomic<uint32_t> simulation_timestamp_;
     
+    // Synchronization for shard processing
+    std::array<std::atomic<bool>, NUM_ACTIVATION_SHARDS> shard_completed_;
+    
+    // Performance monitoring
+    std::chrono::steady_clock::time_point last_timestamp_time_;
+    
     // Visualization
     std::vector<NeuronFiringEvent> recent_firings_;  // Thread-safe accumulator
     std::mutex firing_mutex_;
@@ -100,12 +106,12 @@ private:
     std::chrono::steady_clock::time_point last_update_;
     
     // Z-coordinate tracking for chart
-    static constexpr int CHART_HISTORY_SIZE = 50;  // 5 seconds at 100ms intervals
+    static constexpr int CHART_HISTORY_SIZE = 50;  // 50 simulation timestamps of history
     static constexpr int Z_BINS = 20;              // Number of Z-coordinate bins
     std::vector<std::vector<int>> z_distribution_history_;  // [time_index][z_bin]
     std::vector<int> sensor_activation_history_;           // [time_index] -> count of sensor activations
+    std::vector<float> max_z_history_;                     // [time_index] -> max Z coordinate of activations
     int current_history_index_;
-    std::chrono::steady_clock::time_point last_chart_update_;
     
     // 3D visualization time bins for fading effect
     static constexpr int FIRING_TIME_BINS = 10;     // 10 bins for 1 second at 100ms intervals
@@ -115,15 +121,24 @@ private:
     // Ripple effects
     std::vector<RippleEffect> active_ripples_;
     
+    // Scheduled activations
+    static constexpr int SCHEDULE_POINTS = 12;           // 12 points around the circle
+    static constexpr uint32_t SCHEDULE_INTERVAL = 100;   // 10 seconds = 100 simulation steps
+    uint32_t next_scheduled_activation_;
+    int current_schedule_point_;
+    
 public:
     NeuronExperimentApp() : window_(nullptr), renderer_(nullptr), viz_window_(nullptr), viz_renderer_(nullptr),
                            running_(false), grid_(GRID_SIZE, std::vector<GridCell>(GRID_SIZE)),
-                           message_processor_(10), threads_running_(false), simulation_timestamp_(0),
+                           message_processor_(10), threads_running_(false), simulation_timestamp_(1),
                            z_distribution_history_(CHART_HISTORY_SIZE, std::vector<int>(Z_BINS, 0)),
                            sensor_activation_history_(CHART_HISTORY_SIZE, 0),
+                           max_z_history_(CHART_HISTORY_SIZE, -2.0f),
                            current_history_index_(0),
                            firing_time_bins_(FIRING_TIME_BINS),
-                           current_firing_bin_(0) {
+                           current_firing_bin_(0),
+                           next_scheduled_activation_(SCHEDULE_INTERVAL),
+                           current_schedule_point_(0) {
         
         // Initialize logging
         initialize_logging();
@@ -139,11 +154,16 @@ public:
             }
         });
         
+        // Initialize shard completion flags - start as false so timestamp 1 can be processed
+        for (auto& completed : shard_completed_) {
+            completed.store(false);
+        }
+        
         // Initialize shard threads
         initialize_shard_threads();
         
         last_update_ = std::chrono::steady_clock::now();
-        last_chart_update_ = std::chrono::steady_clock::now();
+        last_timestamp_time_ = std::chrono::steady_clock::now();
     }
     
     ~NeuronExperimentApp() {
@@ -392,6 +412,30 @@ public:
             SDL_RenderDrawLine(viz_renderer_, x1, y1, x2, y2);
         }
         
+        // Draw max Z coordinate line graph overlay
+        SDL_SetRenderDrawColor(viz_renderer_, 255, 0, 255, 255); // Magenta line
+        
+        // Draw line connecting max Z points (normalized to -1.0 to +1.0 range)
+        for (int t = 1; t < CHART_HISTORY_SIZE; ++t) {
+            int time_index1 = (current_history_index_ + t) % CHART_HISTORY_SIZE;
+            int time_index2 = (current_history_index_ + t + 1) % CHART_HISTORY_SIZE;
+            
+            float max_z1 = max_z_history_[time_index1];
+            float max_z2 = max_z_history_[time_index2];
+            
+            // Only draw if we have valid data
+            if (max_z1 > -2.0f && max_z2 > -2.0f) {
+                int x1 = CHART_X + (t - 1) * bar_width + bar_width / 2;
+                int x2 = CHART_X + t * bar_width + bar_width / 2;
+                
+                // Normalize Z coordinates from [-1.0, +1.0] to [0, CHART_HEIGHT]
+                int y1 = CHART_Y + CHART_HEIGHT - static_cast<int>((max_z1 + 1.0f) * CHART_HEIGHT / 2.0f);
+                int y2 = CHART_Y + CHART_HEIGHT - static_cast<int>((max_z2 + 1.0f) * CHART_HEIGHT / 2.0f);
+                
+                SDL_RenderDrawLine(viz_renderer_, x1, y1, x2, y2);
+            }
+        }
+        
         // Draw labels
         SDL_SetRenderDrawColor(viz_renderer_, 200, 200, 200, 255);
         // Title area (just draw a simple line for now)
@@ -406,6 +450,7 @@ public:
         std::fill(z_distribution_history_[current_history_index_].begin(), 
                  z_distribution_history_[current_history_index_].end(), 0);
         sensor_activation_history_[current_history_index_] = 0;
+        max_z_history_[current_history_index_] = -2.0f;  // Reset to invalid value
     }
     
     void update_firing_bins() {
@@ -471,6 +516,76 @@ public:
                 }), 
             active_ripples_.end()
         );
+    }
+    
+    bool all_shards_completed() {
+        for (const auto& completed : shard_completed_) {
+            if (!completed.load()) {
+                return false;
+            }
+        }
+        return true;
+    }
+    
+    void advance_timestamp() {
+        auto current_time = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - last_timestamp_time_);
+        float seconds_per_timestamp = elapsed.count() / 1000.0f;
+        
+        simulation_timestamp_.fetch_add(1);
+        
+        // Log performance for this timestamp
+        spdlog::info("Performance: {:.3f} seconds/timestamp (timestamp {})", 
+                    seconds_per_timestamp, simulation_timestamp_.load());
+        
+        // Update charts synchronized with simulation timestamps
+        update_z_chart();
+        update_firing_bins();
+        
+        // Reset all shard completion flags for next timestamp
+        for (auto& completed : shard_completed_) {
+            completed.store(false);
+        }
+        
+        last_timestamp_time_ = current_time;
+    }
+    
+    void process_scheduled_activations() {
+        uint32_t current_timestamp = simulation_timestamp_.load();
+        
+        if (current_timestamp >= next_scheduled_activation_) {
+            // Calculate position on circle
+            float center_x = GRID_SIZE / 2.0f;
+            float center_y = GRID_SIZE / 2.0f;
+            float radius = GRID_SIZE / 4.0f;  // Half the grid size radius
+            
+            // Calculate angle for current point (clockwise, starting from top)
+            float angle = (static_cast<float>(current_schedule_point_) / SCHEDULE_POINTS) * 2.0f * M_PI - M_PI_2;
+            
+            // Calculate grid position
+            int grid_x = static_cast<int>(center_x + radius * std::cos(angle));
+            int grid_y = static_cast<int>(center_y + radius * std::sin(angle));
+            
+            // Clamp to grid bounds
+            grid_x = std::max(0, std::min(GRID_SIZE - 1, grid_x));
+            grid_y = std::max(0, std::min(GRID_SIZE - 1, grid_y));
+            
+            // Activate the cell
+            auto& cell = grid_[grid_y][grid_x];
+            cell.user_intensity = 1.0f;
+            cell.last_source = CellSource::USER;
+            cell.activation_sent = false;
+            
+            // Create ripple effect
+            active_ripples_.emplace_back(grid_x, grid_y, CellSource::USER, current_timestamp);
+            
+            spdlog::info("Scheduled activation at point {}/12: grid=({}, {}), angle={:.1f}°", 
+                        current_schedule_point_ + 1, grid_x, grid_y, angle * 180.0f / M_PI);
+            
+            // Move to next point
+            current_schedule_point_ = (current_schedule_point_ + 1) % SCHEDULE_POINTS;
+            next_scheduled_activation_ = current_timestamp + SCHEDULE_INTERVAL;
+        }
     }
     
     void initialize_shard_threads() {
@@ -556,15 +671,24 @@ public:
         spdlog::debug("Shard {} worker thread started", shard_idx);
         
         auto& shard = message_processor_.get_shard(shard_idx);
+        uint32_t last_processed_timestamp = 0;
         
         while (threads_running_.load()) {
             uint32_t current_timestamp = simulation_timestamp_.load();
             
-            // Process one tick for this shard
-            shard.process_tick(*brain_, current_timestamp, &message_processor_);
-            
-            // Small sleep to prevent excessive CPU usage
-            std::this_thread::sleep_for(std::chrono::microseconds(100));
+            // Only process if we haven't processed this timestamp yet
+            if (current_timestamp > last_processed_timestamp) {
+                // Process one tick for this shard
+                shard.process_tick(*brain_, current_timestamp, &message_processor_);
+                
+                // Mark this shard as completed for this timestamp
+                shard_completed_[shard_idx].store(true);
+                last_processed_timestamp = current_timestamp;
+                //spdlog::info("Shard {} completed timestamp {}", shard_idx, current_timestamp);
+            } else {
+                // Small sleep to prevent excessive CPU usage when waiting
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
         }
         
         spdlog::debug("Shard {} worker thread stopped", shard_idx);
@@ -630,21 +754,11 @@ public:
     }
     
     void update() {
-        auto current_time = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - last_update_);
-        auto chart_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - last_chart_update_);
-        
-        if (elapsed.count() >= 100) {
+        // Wait for all shards to complete current timestamp before advancing
+        if (all_shards_completed()) {
             simulation_step();
-            last_update_ = current_time;
-            simulation_timestamp_.fetch_add(1);
+            advance_timestamp();
             spdlog::debug("Simulation step completed, timestamp: {}", simulation_timestamp_.load());
-        }
-        
-        if (chart_elapsed.count() >= 100) {
-            update_z_chart();
-            update_firing_bins();
-            last_chart_update_ = current_time;
         }
     }
     
@@ -657,14 +771,14 @@ public:
         // 2. Generate sensor activations for all grid elements
         generate_sensor_activations();
         
-        // 3. Process neural network for one step
-        process_neural_network();
-        
-        // 4. Handle actuator outputs
+        // 3. Handle actuator outputs
         process_actuator_outputs();
         
-        // 5. Update ripple effects
+        // 4. Update ripple effects
         update_ripples();
+        
+        // 5. Process scheduled activations
+        process_scheduled_activations();
     }
     
     void fade_grid() {
@@ -731,13 +845,7 @@ public:
             spdlog::debug("Generated {} sensor activations but no targeted activations", activations.size());
         }
     }
-    
-    void process_neural_network() {
-        // Neural network processing is now handled by shard threads
-        // Just update the simulation timestamp to coordinate the threads
-        //spdlog::debug("Updating simulation timestamp for {} shard threads", NUM_ACTIVATION_SHARDS);
-    }
-    
+        
     void process_actuator_outputs() {
         // Get all actuation events
         auto actuation_events = brain_->actuation_queue.pop_all();
@@ -747,6 +855,9 @@ public:
         }
         
         for (const auto& event : actuation_events) {
+            spdlog::info("Actuator fired: neuron_pos=({:.3f}, {:.3f}, {:.3f}) timestamp={}", 
+                        event.position.x, event.position.y, event.position.z, event.timestamp);
+            
             // Convert world position to grid coordinates
             // Assuming the sensor grid spans the same area as the flow field
             float norm_x = (event.position.x - (-1.0f)) / (1.0f - (-1.0f));  // Normalize to 0-1
@@ -756,19 +867,20 @@ public:
             int grid_y = static_cast<int>(norm_y * GRID_SIZE);
             
             // Clamp to grid bounds
-            grid_x = std::max(0, std::min(GRID_SIZE - 1, grid_x));
-            grid_y = std::max(0, std::min(GRID_SIZE - 1, grid_y));
+            int clamped_grid_x = std::max(0, std::min(GRID_SIZE - 1, grid_x));
+            int clamped_grid_y = std::max(0, std::min(GRID_SIZE - 1, grid_y));
             
-            spdlog::debug("Actuator event: world_pos=({:.2f}, {:.2f}, {:.2f}) -> grid=({}, {})", 
-                         event.position.x, event.position.y, event.position.z, grid_x, grid_y);
+            spdlog::info("Actuator mapping: world=({:.3f}, {:.3f}) -> norm=({:.3f}, {:.3f}) -> grid=({}, {}) -> clamped=({}, {})", 
+                        event.position.x, event.position.y, norm_x, norm_y, 
+                        grid_x, grid_y, clamped_grid_x, clamped_grid_y);
             
             // Set actuator intensity
-            grid_[grid_y][grid_x].actuator_intensity = 1.0f;
-            grid_[grid_y][grid_x].last_source = CellSource::ACTUATOR;
-            grid_[grid_y][grid_x].activation_sent = false;  // Reset to allow new activation
+            grid_[clamped_grid_y][clamped_grid_x].actuator_intensity = 1.0f;
+            grid_[clamped_grid_y][clamped_grid_x].last_source = CellSource::ACTUATOR;
+            grid_[clamped_grid_y][clamped_grid_x].activation_sent = false;  // Reset to allow new activation
             
             // Create ripple effect
-            active_ripples_.emplace_back(grid_x, grid_y, CellSource::ACTUATOR, simulation_timestamp_.load());
+            active_ripples_.emplace_back(clamped_grid_x, clamped_grid_y, CellSource::ACTUATOR, simulation_timestamp_.load());
         }
     }
     
@@ -789,6 +901,9 @@ public:
                 
                 // Store position in current firing time bin
                 firing_time_bins_[current_firing_bin_].push_back(event.position);
+                
+                // Track max Z coordinate for this time slot
+                max_z_history_[current_history_index_] = std::max(max_z_history_[current_history_index_], event.position.z);
             }
             recent_firings_.clear();
         }
