@@ -18,7 +18,7 @@ target_include_directories(neuronlib PUBLIC
 
 target_link_libraries(neuronlib PUBLIC
     spdlog::spdlog
-    CUDA::cudart
+    OpenCL::OpenCL
 )
 
 target_compile_features(neuronlib PUBLIC cxx_std_17)
