@@ -56,6 +56,18 @@ struct GridCell {
     }
 };
 
+struct RippleEffect {
+    int center_x, center_y;
+    float current_radius;
+    float max_radius;
+    CellSource source_type;
+    uint32_t start_time;
+    
+    RippleEffect(int x, int y, CellSource source, uint32_t time) 
+        : center_x(x), center_y(y), current_radius(0.0f), max_radius(10.0f), 
+          source_type(source), start_time(time) {}
+};
+
 struct IsometricPoint {
     float x, y;
 };
@@ -99,6 +111,9 @@ private:
     static constexpr int FIRING_TIME_BINS = 10;     // 10 bins for 1 second at 100ms intervals
     std::vector<std::vector<Vec3>> firing_time_bins_;  // [time_bin][positions]
     int current_firing_bin_;
+    
+    // Ripple effects
+    std::vector<RippleEffect> active_ripples_;
     
 public:
     NeuronExperimentApp() : window_(nullptr), renderer_(nullptr), viz_window_(nullptr), viz_renderer_(nullptr),
@@ -404,6 +419,60 @@ public:
         current_firing_bin_ = 0;  // Always add to bin 0 (newest)
     }
     
+    void update_ripples() {
+        uint32_t current_timestamp = simulation_timestamp_.load();
+        constexpr uint32_t RIPPLE_DURATION = 10;  // simulation steps to complete
+        
+        // Update existing ripples and activate grid cells
+        for (auto& ripple : active_ripples_) {
+            uint32_t age = current_timestamp - ripple.start_time;
+            float new_radius = (static_cast<float>(age) / RIPPLE_DURATION) * ripple.max_radius;
+            
+            // Only activate cells at the current expanding edge
+            if (new_radius > ripple.current_radius) {
+                int min_radius = static_cast<int>(ripple.current_radius);
+                int max_radius = static_cast<int>(new_radius) + 1;
+                
+                // Activate cells in the expanding ring
+                for (int dy = -max_radius; dy <= max_radius; ++dy) {
+                    for (int dx = -max_radius; dx <= max_radius; ++dx) {
+                        float distance = std::sqrt(dx * dx + dy * dy);
+                        
+                        // Only activate cells in the current ring
+                        if (distance > min_radius && distance <= max_radius) {
+                            int cell_x = ripple.center_x + dx;
+                            int cell_y = ripple.center_y + dy;
+                            
+                            if (cell_x >= 0 && cell_x < GRID_SIZE && cell_y >= 0 && cell_y < GRID_SIZE) {
+                                auto& cell = grid_[cell_y][cell_x];
+                                
+                                if (ripple.source_type == CellSource::USER) {
+                                    cell.user_intensity = 0.5f;  // Dimmer than direct click
+                                    cell.last_source = CellSource::USER;
+                                } else {
+                                    cell.actuator_intensity = 0.5f;  // Dimmer than direct actuator
+                                    cell.last_source = CellSource::ACTUATOR;
+                                }
+                                cell.activation_sent = false;  // Allow new activation
+                            }
+                        }
+                    }
+                }
+                
+                ripple.current_radius = new_radius;
+            }
+        }
+        
+        // Remove completed ripples
+        active_ripples_.erase(
+            std::remove_if(active_ripples_.begin(), active_ripples_.end(),
+                [current_timestamp](const RippleEffect& ripple) {
+                    return (current_timestamp - ripple.start_time) > RIPPLE_DURATION;
+                }), 
+            active_ripples_.end()
+        );
+    }
+    
     void initialize_shard_threads() {
         spdlog::info("Initializing shard processing threads...");
         
@@ -552,6 +621,10 @@ public:
             grid_[grid_y][grid_x].user_intensity = 1.0f;
             grid_[grid_y][grid_x].last_source = CellSource::USER;
             grid_[grid_y][grid_x].activation_sent = false;  // Reset to allow new activation
+            
+            // Create ripple effect
+            active_ripples_.emplace_back(grid_x, grid_y, CellSource::USER, simulation_timestamp_.load());
+            
             spdlog::debug("User activated cell ({}, {}) at screen pos ({}, {})", grid_x, grid_y, x, y);
         }
     }
@@ -589,6 +662,9 @@ public:
         
         // 4. Handle actuator outputs
         process_actuator_outputs();
+        
+        // 5. Update ripple effects
+        update_ripples();
     }
     
     void fade_grid() {
@@ -690,6 +766,9 @@ public:
             grid_[grid_y][grid_x].actuator_intensity = 1.0f;
             grid_[grid_y][grid_x].last_source = CellSource::ACTUATOR;
             grid_[grid_y][grid_x].activation_sent = false;  // Reset to allow new activation
+            
+            // Create ripple effect
+            active_ripples_.emplace_back(grid_x, grid_y, CellSource::ACTUATOR, simulation_timestamp_.load());
         }
     }
     
