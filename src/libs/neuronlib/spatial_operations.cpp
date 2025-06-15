@@ -491,12 +491,13 @@ BrainPtr populate_neuron_grid(
     
     // Initialize random number generator for weights and thresholds
     std::mt19937 weight_rng(random_seed + 1000000);
-    std::uniform_real_distribution<float> weight_dist(-1.0f, 1.0f);
+    std::normal_distribution<float> weight_dist(0.5f, 0.167f);  // Normal distribution centered at 0.5, ~99% within [0,1]
     std::uniform_real_distribution<float> threshold_dist(0.1f, 2.0f);
     
     // Initialize all weights to random values
     for (uint32_t i = 0; i < MAX_ADDRESSES; ++i) {
-        brain->weights[i] = weight_dist(weight_rng);
+        float weight = weight_dist(weight_rng);
+        brain->weights[i] = std::max(0.0f, std::min(1.0f, weight));  // Clamp to [0,1] range
     }
     
     // Calculate 3D grid dimensions - try to make it as cubic as possible

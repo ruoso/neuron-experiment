@@ -83,15 +83,24 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
         
         // Sum all activations within timing window and track which contributed
         float total_input = 0.0f;
+        float total_absolute_weights = 0.0f;
         std::vector<bool> activation_contributed(activations.size(), false);
         for (size_t act_idx = 0; act_idx < activations.size(); ++act_idx) {
             const auto& activation = activations[act_idx];
             if (current_timestamp >= activation.timestamp && 
                 current_timestamp <= activation.timestamp + timing_window_) {
-                float weighted_input = activation.value * brain.weights[target_address];
+                float weight = brain.weights[target_address];
+                float weighted_input = activation.value * weight;
                 total_input += weighted_input;
+                total_absolute_weights += std::abs(weight);
                 activation_contributed[act_idx] = (weighted_input > 0.0f);
             }
+        }
+        
+        // Normalize output to 0-1 range based on total absolute weights
+        if (total_absolute_weights > 0.0f) {
+            total_input = (total_input + total_absolute_weights) / (2.0f * total_absolute_weights);
+            total_input = std::max(0.0f, std::min(1.0f, total_input));
         }
         
         // Check if this is a terminal or branch address
@@ -116,6 +125,15 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
             if (neuron_index < MAX_NEURONS) {
                 bool neuron_fired = total_input >= brain.neurons[neuron_index].threshold;
                 
+                // Check refractory period - suppress firing if neuron fired too recently
+                constexpr uint32_t REFRACTORY_PERIOD = 5;  // 5 ticks minimum between firings
+                uint32_t last_firing_time = brain.last_activations[target_address >> ACTIVATION_TIME_SHIFT];
+                bool in_refractory = (current_timestamp - last_firing_time) < REFRACTORY_PERIOD;
+                
+                if (neuron_fired && in_refractory) {
+                    neuron_fired = false;  // Suppress firing due to refractory period
+                }
+                
                 // Adjust weights based on Hebbian learning
                 constexpr float LEARNING_RATE = 0.01f;
                 for (size_t act_idx = 0; act_idx < activations.size(); ++act_idx) {
@@ -130,7 +148,7 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
                         } else if (!neuron_fired) {
                             // Slightly weaken weights when neuron doesn't fire
                             brain.weights[target_address] -= LEARNING_RATE * 0.1f;
-                            brain.weights[target_address] = std::max(brain.weights[target_address], -2.0f); // Floor at -2.0
+                            brain.weights[target_address] = std::max(brain.weights[target_address], 0.1f); // Floor at 0.1
                         }
                     }
                 }
@@ -321,7 +339,14 @@ const ActivationShard& ShardedMessageProcessor::get_shard(uint32_t shard_index) 
 }
 
 uint32_t ShardedMessageProcessor::get_shard_index(uint32_t target_address) {
-    return target_address % NUM_ACTIVATION_SHARDS;
+    // Use FNV-1a hash for better distribution
+    uint32_t hash = 2166136261u;  // FNV offset basis
+    hash ^= target_address;
+    hash *= 16777619u;  // FNV prime
+    hash ^= (target_address >> 16);
+    hash *= 16777619u;
+    
+    return hash % NUM_ACTIVATION_SHARDS;
 }
 
 void ShardedMessageProcessor::set_neuron_firing_callback(NeuronFiringCallback callback) {

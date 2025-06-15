@@ -18,6 +18,9 @@
 #include <condition_variable>
 #include <functional>
 #include <atomic>
+#include <pthread.h>
+#include <sched.h>
+#include <cstring>
 
 using namespace neuronlib;
 
@@ -40,8 +43,9 @@ struct GridCell {
     float user_intensity;      // 0.0 to 1.0
     float actuator_intensity;  // 0.0 to 1.0
     CellSource last_source;
+    bool activation_sent;      // Track if activation was already sent
     
-    GridCell() : user_intensity(0.0f), actuator_intensity(0.0f), last_source(CellSource::NONE) {}
+    GridCell() : user_intensity(0.0f), actuator_intensity(0.0f), last_source(CellSource::NONE), activation_sent(false) {}
     
     float get_total_intensity() const {
         return std::max(user_intensity, actuator_intensity);
@@ -87,6 +91,7 @@ private:
     static constexpr int CHART_HISTORY_SIZE = 50;  // 5 seconds at 100ms intervals
     static constexpr int Z_BINS = 20;              // Number of Z-coordinate bins
     std::vector<std::vector<int>> z_distribution_history_;  // [time_index][z_bin]
+    std::vector<int> sensor_activation_history_;           // [time_index] -> count of sensor activations
     int current_history_index_;
     std::chrono::steady_clock::time_point last_chart_update_;
     
@@ -100,6 +105,7 @@ public:
                            running_(false), grid_(GRID_SIZE, std::vector<GridCell>(GRID_SIZE)),
                            message_processor_(10), threads_running_(false), simulation_timestamp_(0),
                            z_distribution_history_(CHART_HISTORY_SIZE, std::vector<int>(Z_BINS, 0)),
+                           sensor_activation_history_(CHART_HISTORY_SIZE, 0),
                            current_history_index_(0),
                            firing_time_bins_(FIRING_TIME_BINS),
                            current_firing_bin_(0) {
@@ -348,6 +354,29 @@ public:
             }
         }
         
+        // Draw sensor activation line graph overlay
+        SDL_SetRenderDrawColor(viz_renderer_, 255, 255, 0, 255); // Yellow line
+        
+        // Find max sensor activations for scaling
+        int max_sensor_activations = 1;
+        for (int t = 0; t < CHART_HISTORY_SIZE; ++t) {
+            max_sensor_activations = std::max(max_sensor_activations, sensor_activation_history_[t]);
+        }
+        
+        // Draw line connecting sensor activation points
+        for (int t = 1; t < CHART_HISTORY_SIZE; ++t) {
+            int time_index1 = (current_history_index_ + t) % CHART_HISTORY_SIZE;
+            int time_index2 = (current_history_index_ + t + 1) % CHART_HISTORY_SIZE;
+            
+            int x1 = CHART_X + (t - 1) * bar_width + bar_width / 2;
+            int x2 = CHART_X + t * bar_width + bar_width / 2;
+            
+            int y1 = CHART_Y + CHART_HEIGHT - (sensor_activation_history_[time_index1] * CHART_HEIGHT) / max_sensor_activations;
+            int y2 = CHART_Y + CHART_HEIGHT - (sensor_activation_history_[time_index2] * CHART_HEIGHT) / max_sensor_activations;
+            
+            SDL_RenderDrawLine(viz_renderer_, x1, y1, x2, y2);
+        }
+        
         // Draw labels
         SDL_SetRenderDrawColor(viz_renderer_, 200, 200, 200, 255);
         // Title area (just draw a simple line for now)
@@ -361,6 +390,7 @@ public:
         // Clear current time slot
         std::fill(z_distribution_history_[current_history_index_].begin(), 
                  z_distribution_history_[current_history_index_].end(), 0);
+        sensor_activation_history_[current_history_index_] = 0;
     }
     
     void update_firing_bins() {
@@ -379,14 +409,60 @@ public:
         
         threads_running_.store(true);
         
-        // Create one thread per shard
+        // Get main thread's current CPU to avoid using it for shards
+        cpu_set_t main_cpuset;
+        CPU_ZERO(&main_cpuset);
+        int main_core = -1;
+        if (pthread_getaffinity_np(pthread_self(), sizeof(cpu_set_t), &main_cpuset) == 0) {
+            // Find the first CPU the main thread is using
+            for (int i = 0; i < CPU_SETSIZE; ++i) {
+                if (CPU_ISSET(i, &main_cpuset)) {
+                    main_core = i;
+                    break;
+                }
+            }
+        }
+        
+        // Create one thread per shard with CPU affinity
         for (uint32_t shard_idx = 0; shard_idx < NUM_ACTIVATION_SHARDS; ++shard_idx) {
-            shard_threads_.emplace_back([this, shard_idx]() {
+            shard_threads_.emplace_back([this, shard_idx, main_core]() {
+                // Set thread affinity to spread across cores
+                cpu_set_t cpuset;
+                CPU_ZERO(&cpuset);
+                
+                // Get number of available cores
+                int num_cores = std::thread::hardware_concurrency();
+                if (num_cores > 1) {  // Need at least 2 cores to avoid main thread
+                    // Distribute threads across cores, avoiding main thread's core
+                    int target_core = shard_idx;
+                    if (main_core >= 0) {
+                        // Skip the main core by mapping shard indices to available cores
+                        int available_cores = num_cores - 1;
+                        target_core = shard_idx % available_cores;
+                        if (target_core >= main_core) {
+                            target_core++;  // Skip over main core
+                        }
+                    } else {
+                        target_core = (shard_idx + 1) % num_cores;  // Fallback: skip core 0
+                    }
+                    
+                    CPU_SET(target_core, &cpuset);
+                    
+                    int result = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+                    if (result == 0) {
+                        spdlog::debug("Shard {} thread bound to CPU core {} (avoiding main core {})", 
+                                     shard_idx, target_core, main_core);
+                    } else {
+                        spdlog::warn("Failed to set CPU affinity for shard {} thread: {}", shard_idx, strerror(result));
+                    }
+                }
+                
                 shard_worker_loop(shard_idx);
             });
         }
         
-        spdlog::info("Started {} shard processing threads", NUM_ACTIVATION_SHARDS);
+        spdlog::info("Started {} shard processing threads (avoiding main thread core {})", 
+                     NUM_ACTIVATION_SHARDS, main_core);
     }
     
     void stop_shard_threads() {
@@ -475,6 +551,7 @@ public:
         if (grid_x >= 0 && grid_x < GRID_SIZE && grid_y >= 0 && grid_y < GRID_SIZE) {
             grid_[grid_y][grid_x].user_intensity = 1.0f;
             grid_[grid_y][grid_x].last_source = CellSource::USER;
+            grid_[grid_y][grid_x].activation_sent = false;  // Reset to allow new activation
             spdlog::debug("User activated cell ({}, {}) at screen pos ({}, {})", grid_x, grid_y, x, y);
         }
     }
@@ -504,7 +581,7 @@ public:
         // 1. Fade all cells by 1/4
         fade_grid();
         
-        // 2. Generate sensor activations for non-black cells
+        // 2. Generate sensor activations for all grid elements
         generate_sensor_activations();
         
         // 3. Process neural network for one step
@@ -524,6 +601,7 @@ public:
                     cell.user_intensity = 0.0f;
                     cell.actuator_intensity = 0.0f;
                     cell.last_source = CellSource::NONE;
+                    cell.activation_sent = false;  // Reset when cell becomes inactive
                 }
             }
         }
@@ -531,53 +609,50 @@ public:
     
     void generate_sensor_activations() {
         std::vector<SensorActivation> activations;
-        int user_activations = 0;
-        int actuator_activations = 0;
         
+        // Generate sensor input once for any non-black cell that hasn't sent activation yet
         for (int y = 0; y < GRID_SIZE; ++y) {
             for (int x = 0; x < GRID_SIZE; ++x) {
-                const auto& cell = grid_[y][x];
+                auto& cell = grid_[y][x];
                 
-                if (cell.get_total_intensity() > 0.01f) {
+                // Send activation for any active cell that hasn't sent one yet
+                if (!cell.activation_sent && cell.get_total_intensity() > 0.01f) {
                     uint32_t sensor_index = y * GRID_SIZE + x;
-                    
-                    // Determine which modes to activate based on intensity and source
                     uint8_t mode_bitmap = 0;
+                    float intensity = cell.get_total_intensity();
                     
                     if (cell.user_intensity > 0.01f) {
                         // User input: use modes 0-3 based on intensity
-                        float intensity = cell.user_intensity;
                         if (intensity > 0.75f) mode_bitmap |= (1 << 0);  // Mode 0: Very bright
                         else if (intensity > 0.5f) mode_bitmap |= (1 << 1);   // Mode 1: Bright
                         else if (intensity > 0.25f) mode_bitmap |= (1 << 2);  // Mode 2: Medium
                         else mode_bitmap |= (1 << 3);                         // Mode 3: Dim
-                        user_activations++;
-                    }
-                    
-                    if (cell.actuator_intensity > 0.01f) {
+                    } else if (cell.actuator_intensity > 0.01f) {
                         // Actuator feedback: use all 4 modes to indicate self-generated
                         mode_bitmap = 0xF; // All 4 modes active
-                        actuator_activations++;
                     }
                     
                     if (mode_bitmap != 0) {
-                        activations.emplace_back(sensor_index, mode_bitmap, cell.get_total_intensity());
+                        activations.emplace_back(sensor_index, mode_bitmap, intensity);
+                        cell.activation_sent = true;  // Mark as sent to prevent repeats
                     }
                 }
             }
         }
         
-        if (!activations.empty()) {
-            //spdlog::debug("Generated {} sensor activations: {} user, {} actuator", 
-            //             activations.size(), user_activations, actuator_activations);
-        }
-        
         // Process sensor activations and send to neural network
         uint32_t current_timestamp = simulation_timestamp_.load();
         auto targeted_activations = process_sensor_activations(brain_->sensor_grid, activations, current_timestamp);
+        
+        // Track sensor activation count for chart (both raw and targeted)
+        sensor_activation_history_[current_history_index_] += static_cast<int>(activations.size());
+        
         if (!targeted_activations.empty()) {
-            //spdlog::debug("Converted to {} targeted neural activations", targeted_activations.size());
+            spdlog::debug("Generated {} sensor activations -> {} targeted activations", 
+                         activations.size(), targeted_activations.size());
             message_processor_.send_activations_to_shards(targeted_activations);
+        } else if (!activations.empty()) {
+            spdlog::debug("Generated {} sensor activations but no targeted activations", activations.size());
         }
     }
     
@@ -614,6 +689,7 @@ public:
             // Set actuator intensity
             grid_[grid_y][grid_x].actuator_intensity = 1.0f;
             grid_[grid_y][grid_x].last_source = CellSource::ACTUATOR;
+            grid_[grid_y][grid_x].activation_sent = false;  // Reset to allow new activation
         }
     }
     
