@@ -21,9 +21,10 @@ class ShardedMessageProcessor;
 struct Activation {
     float value;
     uint32_t timestamp;
+    uint32_t source_address;  // Address of the source sending this activation
     
-    Activation() : value(1.0f), timestamp(0) {}
-    Activation(float val, uint32_t time) : value(val), timestamp(time) {}
+    Activation() : value(1.0f), timestamp(0), source_address(0) {}
+    Activation(float val, uint32_t time, uint32_t source = 0) : value(val), timestamp(time), source_address(source) {}
 };
 
 constexpr size_t NUM_ACTIVATION_SHARDS = 15;

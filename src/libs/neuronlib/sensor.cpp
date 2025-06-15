@@ -31,7 +31,8 @@ std::vector<TargetedActivation> process_sensor_activations(
                 for (size_t dendrite_index = 0; dendrite_index < MAX_DENDRITES_PER_MODE; ++dendrite_index) {
                     uint32_t target_dendrite = mode.target_dendrites[dendrite_index];
                     if (target_dendrite != 0) {
-                        result.emplace_back(target_dendrite, Activation(activation.value, timestamp));
+                        // Use the dendrite terminal as both source and target
+                        result.emplace_back(target_dendrite, Activation(activation.value, timestamp, target_dendrite));
                     }
                 }
             }

@@ -89,7 +89,7 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
             const auto& activation = activations[act_idx];
             if (current_timestamp >= activation.timestamp && 
                 current_timestamp <= activation.timestamp + timing_window_) {
-                float weight = brain.weights[target_address];
+                float weight = brain.weights[activation.source_address];
                 float weighted_input = activation.value * weight;
                 total_input += weighted_input;
                 total_absolute_weights += std::abs(weight);
@@ -108,7 +108,7 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
             // Terminal: propagate to its branch (terminals don't store activation state)
             uint32_t branch_address = get_terminal_branch(target_address);
             if (total_input > 0.0f) {
-                TargetedActivation output(branch_address, Activation(total_input, current_timestamp));
+                TargetedActivation output(branch_address, Activation(total_input, current_timestamp, target_address));
                 
                 // Check if this goes to same shard or different shard
                 if (ShardedMessageProcessor::get_shard_index(branch_address) == 
@@ -143,12 +143,12 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
                         
                         if (neuron_fired && activation_contributed[act_idx]) {
                             // Strengthen weights that contributed to firing
-                            brain.weights[target_address] += LEARNING_RATE * activation.value;
-                            brain.weights[target_address] = std::min(brain.weights[target_address], 2.0f); // Cap at 2.0
+                            brain.weights[activation.source_address] += LEARNING_RATE * activation.value;
+                            brain.weights[activation.source_address] = std::min(brain.weights[activation.source_address], 2.0f); // Cap at 2.0
                         } else if (!neuron_fired) {
                             // Slightly weaken weights when neuron doesn't fire
-                            brain.weights[target_address] -= LEARNING_RATE * 0.1f;
-                            brain.weights[target_address] = std::max(brain.weights[target_address], 0.1f); // Floor at 0.1
+                            brain.weights[activation.source_address] -= LEARNING_RATE * 0.1f;
+                            brain.weights[activation.source_address] = std::max(brain.weights[activation.source_address], 0.1f); // Floor at 0.1
                         }
                     }
                 }
@@ -215,7 +215,7 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
                     for (size_t i = 0; i < MAX_OUTPUT_TARGETS; ++i) {
                         uint32_t output_target = brain.neurons[neuron_index].output_targets[i];
                         if (output_target != 0) {
-                            TargetedActivation output(output_target, Activation(1.0f, current_timestamp));
+                            TargetedActivation output(output_target, Activation(1.0f, current_timestamp, target_address));
                             
                             // Check if this goes to same shard or different shard
                             if (ShardedMessageProcessor::get_shard_index(output_target) == 
@@ -270,7 +270,7 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
             } else {
                 // Intermediate branch - propagate to parent
                 if (total_input > 0.0f) {
-                    TargetedActivation output(parent_address, Activation(total_input, current_timestamp));
+                    TargetedActivation output(parent_address, Activation(total_input, current_timestamp, target_address));
                     
                     // Check if this goes to same shard or different shard
                     if (ShardedMessageProcessor::get_shard_index(parent_address) == 
