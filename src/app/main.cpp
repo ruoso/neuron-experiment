@@ -532,6 +532,10 @@ public:
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - last_timestamp_time_);
         float seconds_per_timestamp = elapsed.count() / 1000.0f;
         
+        // Reset all shard completion flags for next timestamp
+        for (auto& completed : shard_completed_) {
+            completed.store(false);
+        }
         simulation_timestamp_.fetch_add(1);
         
         // Log performance for this timestamp
@@ -540,12 +544,7 @@ public:
         
         // Update charts synchronized with simulation timestamps
         update_z_chart();
-        update_firing_bins();
-        
-        // Reset all shard completion flags for next timestamp
-        for (auto& completed : shard_completed_) {
-            completed.store(false);
-        }
+        update_firing_bins();        
         
         last_timestamp_time_ = current_time;
     }
@@ -678,12 +677,16 @@ public:
             
             // Only process if we haven't processed this timestamp yet
             if (current_timestamp > last_processed_timestamp) {
-                // Process one tick for this shard
-                shard.process_tick(*brain_, current_timestamp, &message_processor_);
-                
-                // Mark this shard as completed for this timestamp
-                shard_completed_[shard_idx].store(true);
-                last_processed_timestamp = current_timestamp;
+                try {
+                    // Process one tick for this shard
+                    shard.process_tick(*brain_, current_timestamp, &message_processor_);
+                    
+                    // Mark this shard as completed for this timestamp
+                    shard_completed_[shard_idx].store(true);
+                    last_processed_timestamp = current_timestamp;
+                } catch (const std::exception& e) {
+                    spdlog::error("Shard {} processing error: {}", shard_idx, e.what());
+                }
                 //spdlog::info("Shard {} completed timestamp {}", shard_idx, current_timestamp);
             } else {
                 // Small sleep to prevent excessive CPU usage when waiting
@@ -759,6 +762,9 @@ public:
             simulation_step();
             advance_timestamp();
             spdlog::debug("Simulation step completed, timestamp: {}", simulation_timestamp_.load());
+        } else {
+            // sleep briefly to avoid busy-waiting
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }
     
