@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Build/Test/Lint Commands
-- Build: `cmake -B ./build --build .`
+- Build: `cmake --build build/`
 - Run tests: `make test` or `ctest`
 - Run single test: `ctest -R <test_name>` or `./bin/test_<test_name>`
 - Lint: `make lint` or `cpplint --filter=-legal/copyright src/**/*.cpp include/**/*.h`
