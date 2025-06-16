@@ -61,24 +61,17 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
     std::vector<TargetedActivation> local_activations;
     std::vector<TargetedActivation> cross_shard_activations;
     
+    std::unordered_map<uint32_t, std::vector<Activation>> new_pending_messages_;
+
     // Process each target address that has pending messages
     auto it = pending_messages_.begin();
     while (it != pending_messages_.end()) {
         uint32_t target_address = it->first;
         std::vector<Activation>& activations = it->second;
         
-        // Remove old activations outside timing window
-        activations.erase(
-            std::remove_if(activations.begin(), activations.end(),
-                [current_timestamp, this](const Activation& act) {
-                    return current_timestamp > act.timestamp + timing_window_;
-                }),
-            activations.end()
-        );
-        
         if (activations.empty()) {
-            it = pending_messages_.erase(it);
-            continue;
+            it++;
+            continue;  // No activations to process for this address
         }
         
         // Sum all activations within timing window and track which contributed
@@ -229,66 +222,68 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
                     
                     // Update last activation time (use the target address for proper indexing)
                     brain.last_activations[target_address >> ACTIVATION_TIME_SHIFT] = current_timestamp;
+                } else { 
+                    // Neuron did not fire, copy the activations to pending messages
+                    new_pending_messages_[target_address] = std::move(activations);
                 }
+            } else {
+                spdlog::error("Neuron index {} out of bounds (max {})", neuron_index, MAX_NEURONS);
             }
         } else if (is_branch_address(target_address)) {
             // Branch: check threshold and either propagate up or fire neuron
             uint32_t parent_address = get_parent_branch(target_address);
             
-            if (parent_address == target_address) {
-                // This is the soma (top-level branch)
-                uint32_t neuron_address = get_neuron_address(target_address);
-                uint32_t neuron_index = neuron_address >> DENDRITE_ADDRESS_BITS;
+            // Intermediate branch - propagate to parent
+            if (total_input > 0.0f) {
+                TargetedActivation output(parent_address, Activation(total_input, current_timestamp, target_address));
                 
-                if (neuron_index < MAX_NEURONS && total_input >= brain.neurons[neuron_index].threshold) {
-                    // Neuron fires - check if it's an actuator
-                    if (brain.neurons[neuron_index].is_actuator) {
-                        // Generate actuation event
-                        ActuationEvent actuation_event(brain.neurons[neuron_index].position, current_timestamp);
-                        brain.actuation_queue.push(actuation_event);
-                    }
-                    
-                    // Send activations to its output targets
-                    for (size_t i = 0; i < MAX_OUTPUT_TARGETS; ++i) {
-                        uint32_t output_target = brain.neurons[neuron_index].output_targets[i];
-                        if (output_target != 0) {
-                            TargetedActivation output(output_target, Activation(1.0f, current_timestamp));
-                            
-                            // Check if this goes to same shard or different shard
-                            if (ShardedMessageProcessor::get_shard_index(output_target) == 
-                                ShardedMessageProcessor::get_shard_index(target_address)) {
-                                local_activations.push_back(output);
-                            } else {
-                                cross_shard_activations.push_back(output);
-                            }
-                        }
-                    }
-                    
-                    // Update last activation time (use the target address for proper indexing)
-                    brain.last_activations[target_address >> ACTIVATION_TIME_SHIFT] = current_timestamp;
+                // Check if this goes to same shard or different shard
+                if (ShardedMessageProcessor::get_shard_index(parent_address) == 
+                    ShardedMessageProcessor::get_shard_index(target_address)) {
+                    local_activations.push_back(output);
+                } else {
+                    cross_shard_activations.push_back(output);
                 }
-            } else {
-                // Intermediate branch - propagate to parent
-                if (total_input > 0.0f) {
-                    TargetedActivation output(parent_address, Activation(total_input, current_timestamp, target_address));
-                    
-                    // Check if this goes to same shard or different shard
-                    if (ShardedMessageProcessor::get_shard_index(parent_address) == 
-                        ShardedMessageProcessor::get_shard_index(target_address)) {
-                        local_activations.push_back(output);
-                    } else {
-                        cross_shard_activations.push_back(output);
-                    }
-                    
-                    // Update last activation time for this branch
-                    brain.last_activations[target_address >> ACTIVATION_TIME_SHIFT] = current_timestamp;
-                }
+                
+                // Update last activation time for this branch
+                brain.last_activations[target_address >> ACTIVATION_TIME_SHIFT] = current_timestamp;
             }
+        } else {
+            // Unknown address type - log error and skip
+            spdlog::error("Unknown target address type: {}", target_address);
         }
-        
-        ++it;
+        it++;
     }
     
+    // Update pending messages with any new activations that didn't fire neurons
+    pending_messages_.clear();
+    for (const auto& [addr, acts] : new_pending_messages_) {
+        // filter out old activations
+        std::vector<Activation> filtered_acts;
+        for (const auto& act : acts) {
+            if (current_timestamp >= act.timestamp && 
+                current_timestamp <= act.timestamp + timing_window_) {
+                filtered_acts.push_back(act);
+            }
+        }
+        // Only store if there are still valid activations
+        if (filtered_acts.empty()) continue;
+        // Store the filtered activations back
+        // in the pending messages map
+        if (filtered_acts.size() == acts.size()) {
+            // No filtering needed, just move the original
+            pending_messages_[addr] = std::move(acts);
+        } else {
+            // Store only the filtered activations
+            std::vector<Activation> new_acts;
+            new_acts.reserve(filtered_acts.size());
+            for (const auto& act : filtered_acts) {
+                new_acts.push_back(act);
+            }
+            pending_messages_[addr] = std::move(new_acts);
+        }
+    }
+
     // Handle local activations directly (no thread synchronization needed)
     add_activations(local_activations);
     
