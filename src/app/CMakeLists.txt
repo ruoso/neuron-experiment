@@ -3,6 +3,8 @@ pkg_check_modules(SDL2 REQUIRED sdl2)
 
 add_executable(neuron-experiment
     main.cpp
+    neuron_experiment_app.cpp
+    visualization.cpp
 )
 
 target_link_libraries(neuron-experiment
