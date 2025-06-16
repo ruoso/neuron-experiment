@@ -1,10 +1,9 @@
 #include "gpu_interface.h"
 #include "../neuron.h"
+#include "gpu_kernel_source.h"
 #include <CL/cl.h>
 #include <memory>
 #include <cstdio>
-#include <fstream>
-#include <sstream>
 #include <vector>
 
 namespace neuronlib {
@@ -38,6 +37,19 @@ public:
         cl_int err;
         
         // Get platform
+        cl_uint num_platforms;
+        err = clGetPlatformIDs(0, nullptr, &num_platforms);
+        if (err != CL_SUCCESS) {
+            printf("GPU Init Error: Failed to query OpenCL platforms: %d\n", err);
+            return false;
+        }
+        
+        printf("GPU Info: Found %d OpenCL platforms\n", num_platforms);
+        if (num_platforms == 0) {
+            printf("GPU Init Error: No OpenCL platforms found. Please install OpenCL drivers.\n");
+            return false;
+        }
+        
         cl_platform_id platform;
         err = clGetPlatformIDs(1, &platform, nullptr);
         if (err != CL_SUCCESS) {
@@ -45,16 +57,13 @@ public:
             return false;
         }
         
-        // Get device
         cl_device_id device;
         err = clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 1, &device, nullptr);
         if (err != CL_SUCCESS) {
-            // Try CPU as fallback
-            err = clGetDeviceIDs(platform, CL_DEVICE_TYPE_CPU, 1, &device, nullptr);
-            if (err != CL_SUCCESS) {
-                printf("GPU Init Error: Failed to get OpenCL device: %d\n", err);
-                return false;
-            }
+            printf("GPU Init Error: Failed to get OpenCL device: %d\n", err);
+            return false;
+        } else {
+            printf("GPU Info: Using GPU device\n");
         }
         
         // Create context
@@ -194,26 +203,9 @@ public:
 // Global GPU memory manager instance
 static std::unique_ptr<GpuMemoryManager> g_gpu_manager = nullptr;
 
-// Load kernel source from file
+// Load kernel source from generated header
 std::string load_kernel_source() {
-    std::ifstream file(__FILE__);
-    std::string file_path(__FILE__);
-    
-    // Replace .cpp with .cl to get kernel file path
-    size_t ext_pos = file_path.rfind(".cpp");
-    if (ext_pos != std::string::npos) {
-        file_path.replace(ext_pos, 4, ".cl");
-    }
-    
-    std::ifstream kernel_file(file_path);
-    if (!kernel_file.is_open()) {
-        printf("GPU Error: Failed to open kernel file: %s\n", file_path.c_str());
-        return "";
-    }
-    
-    std::stringstream buffer;
-    buffer << kernel_file.rdbuf();
-    return buffer.str();
+    return std::string(gpu_kernel_source);
 }
 
 // Initialize GPU system
