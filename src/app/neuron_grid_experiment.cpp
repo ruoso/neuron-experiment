@@ -1,4 +1,4 @@
-#include "neuron_experiment_app.h"
+#include "neuron_grid_experiment.h"
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/sinks/basic_file_sink.h>
@@ -13,7 +13,7 @@
 #include <cstring>
 #include <algorithm>
 
-NeuronExperimentApp::NeuronExperimentApp() 
+NeuronGridExperiment::NeuronGridExperiment() 
     : window_(nullptr), renderer_(nullptr),
       running_(false), grid_(GRID_SIZE, std::vector<GridCell>(GRID_SIZE)) {
     
@@ -35,12 +35,12 @@ NeuronExperimentApp::NeuronExperimentApp()
     last_update_ = std::chrono::steady_clock::now();
 }
 
-NeuronExperimentApp::~NeuronExperimentApp() {
+NeuronGridExperiment::~NeuronGridExperiment() {
     neural_sim_.stop();
     cleanup();
 }
 
-void NeuronExperimentApp::initialize_logging() {
+void NeuronGridExperiment::initialize_logging() {
     try {
         // Create console sink with colors
         auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
@@ -67,7 +67,7 @@ void NeuronExperimentApp::initialize_logging() {
     }
 }
 
-bool NeuronExperimentApp::initialize() {
+bool NeuronGridExperiment::initialize() {
     spdlog::info("Initializing Neuron Experiment Application...");
     
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -105,7 +105,7 @@ bool NeuronExperimentApp::initialize() {
 }
 
 
-void NeuronExperimentApp::update_ripples() {
+void NeuronGridExperiment::update_ripples() {
     uint32_t current_timestamp = neural_sim_.get_current_timestamp();
     constexpr uint32_t RIPPLE_DURATION = 4;  // simulation steps to complete
     
@@ -161,7 +161,7 @@ void NeuronExperimentApp::update_ripples() {
 
 
 
-void NeuronExperimentApp::run() {
+void NeuronGridExperiment::run() {
     if (!initialize()) {
         return;
     }
@@ -179,7 +179,7 @@ void NeuronExperimentApp::run() {
     
 }
 
-void NeuronExperimentApp::handle_events() {
+void NeuronGridExperiment::handle_events() {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         switch (event.type) {
@@ -202,7 +202,7 @@ void NeuronExperimentApp::handle_events() {
     }
 }
 
-void NeuronExperimentApp::handle_mouse_click(int x, int y) {
+void NeuronGridExperiment::handle_mouse_click(int x, int y) {
     // Convert screen coordinates to grid coordinates
     int grid_x = (x - GRID_OFFSET_X) / CELL_SIZE;
     int grid_y = (y - GRID_OFFSET_Y) / CELL_SIZE;
@@ -219,7 +219,7 @@ void NeuronExperimentApp::handle_mouse_click(int x, int y) {
     }
 }
 
-void NeuronExperimentApp::update() {
+void NeuronGridExperiment::update() {
     // Wait for neural simulation to be ready, then advance
     if (neural_sim_.is_ready_to_advance()) {
         simulation_step();
@@ -235,7 +235,7 @@ void NeuronExperimentApp::update() {
     }
 }
 
-void NeuronExperimentApp::simulation_step() {
+void NeuronGridExperiment::simulation_step() {
     uint32_t current_timestamp = neural_sim_.get_current_timestamp();
     
     // 1. Fade all cells by 1/4
@@ -252,7 +252,7 @@ void NeuronExperimentApp::simulation_step() {
     
 }
 
-void NeuronExperimentApp::fade_grid() {
+void NeuronGridExperiment::fade_grid() {
     for (auto& row : grid_) {
         for (auto& cell : row) {
             cell.user_intensity *= 0.75f;
@@ -268,7 +268,7 @@ void NeuronExperimentApp::fade_grid() {
     }
 }
 
-void NeuronExperimentApp::generate_sensor_activations() {
+void NeuronGridExperiment::generate_sensor_activations() {
     std::vector<SensorActivation> activations;
     
     // Generate sensor input once for any non-black cell that hasn't sent activation yet
@@ -317,7 +317,7 @@ void NeuronExperimentApp::generate_sensor_activations() {
     }
 }
     
-void NeuronExperimentApp::process_actuator_outputs() {
+void NeuronGridExperiment::process_actuator_outputs() {
     // Get all actuation events
     auto actuation_events = neural_sim_.get_actuator_events();
     
@@ -355,11 +355,11 @@ void NeuronExperimentApp::process_actuator_outputs() {
     }
 }
 
-void NeuronExperimentApp::render_visualization() {
+void NeuronGridExperiment::render_visualization() {
     brain_viz_.render(neural_sim_);
 }
 
-void NeuronExperimentApp::render() {
+void NeuronGridExperiment::render() {
     // Clear screen to black
     SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
     SDL_RenderClear(renderer_);
@@ -393,7 +393,7 @@ void NeuronExperimentApp::render() {
     SDL_RenderPresent(renderer_);
 }
 
-void NeuronExperimentApp::cleanup() {
+void NeuronGridExperiment::cleanup() {
     brain_viz_.cleanup();
     
     if (renderer_) {
@@ -407,4 +407,10 @@ void NeuronExperimentApp::cleanup() {
     }
     
     SDL_Quit();
+}
+
+int main(int argc, char* argv[]) {
+    NeuronGridExperiment app;
+    app.run();
+    return 0;
 }

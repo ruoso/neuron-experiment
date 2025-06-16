@@ -1,5 +1,5 @@
-#ifndef NEURON_EXPERIMENT_APP_H
-#define NEURON_EXPERIMENT_APP_H
+#ifndef NEURON_GRID_EXPERIMENT_H
+#define NEURON_GRID_EXPERIMENT_H
 
 #include "constants.h"
 #include "types.h"
@@ -11,7 +11,7 @@
 
 using namespace neuronlib;
 
-class NeuronExperimentApp {
+class NeuronGridExperiment {
 private:
     SDL_Window* window_;
     SDL_Renderer* renderer_;
@@ -34,8 +34,8 @@ private:
     
 
 public:
-    NeuronExperimentApp();
-    ~NeuronExperimentApp();
+    NeuronGridExperiment();
+    ~NeuronGridExperiment();
     
     bool initialize();
     void run();
