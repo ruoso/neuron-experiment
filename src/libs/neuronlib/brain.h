@@ -13,7 +13,7 @@ namespace neuronlib {
 
 // Configurable addressing scheme
 constexpr uint32_t DENDRITE_ADDRESS_BITS = 12;  // Bits 0-11 for dendrite structure
-constexpr uint32_t NEURON_ADDRESS_BITS = 15;    // Configurable neuron addressing bits
+constexpr uint32_t NEURON_ADDRESS_BITS = 14;    // Configurable neuron addressing bits
 constexpr uint32_t TOTAL_ADDRESS_BITS = 32;     // Total address space
 
 // Static assertions to ensure addressing scheme is valid

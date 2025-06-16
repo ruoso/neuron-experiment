@@ -8,6 +8,7 @@
 #include <cmath>
 #include <limits>
 #include <random>
+#include <cstring>
 
 namespace neuronlib {
 
@@ -496,8 +497,13 @@ BrainPtr populate_neuron_grid(
     
     // Initialize all weights to random values
     for (uint32_t i = 0; i < MAX_ADDRESSES; ++i) {
-        float weight = weight_dist(weight_rng);
-        brain->weights[i] = std::max(0.0f, std::min(1.0f, weight));  // Clamp to [0,1] range
+        // generate weights, but leave terminals at zero
+        if (is_terminal_address(i)) {
+            brain->weights[i] = 0.0f;  // Terminals start at zero, to allow checking for connections
+        } else {
+            float weight = weight_dist(weight_rng);
+            brain->weights[i] = std::max(0.0f, std::min(1.0f, weight));  // Clamp to [0,1] range
+        }
     }
     
     // Calculate 3D grid dimensions - try to make it as cubic as possible

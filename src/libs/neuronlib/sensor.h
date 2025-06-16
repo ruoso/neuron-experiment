@@ -63,7 +63,7 @@ void populate_sensor_grid(SensorGrid& sensor_grid,
                          float max_x, float max_y);
 
 void assign_dendrites_to_sensors(SensorGrid& sensor_grid,
-                                const class Brain& brain,
+                                class Brain& brain,
                                 float connection_radius,
                                 uint32_t random_seed = 54321);
 

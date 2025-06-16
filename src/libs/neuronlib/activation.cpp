@@ -188,7 +188,9 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
                                 
                                 for (const auto& result : search_results) {
                                     if (is_terminal_address(result.item_address) && 
-                                        result.distance_to_apex < closest_distance) {
+                                        result.distance_to_apex < closest_distance &&
+                                        brain.weights[result.item_address] == 0.0f // Only unconnected dendrites
+                                    ) {
                                         closest_dendrite = result.item_address;
                                         closest_distance = result.distance_to_apex;
                                     }
@@ -198,6 +200,9 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
                                     //spdlog::debug("Neuron {} forming new connection to dendrite {}", 
                                     //          neuron_index, closest_dendrite);
                                     brain.neurons[neuron_index].output_targets[i] = closest_dendrite;
+                                    // Set the weight for this new connection to a normal distribution
+                                    std::normal_distribution<float> weight_dist(0.5f, 0.167f);
+                                    brain.weights[closest_dendrite] = weight_dist(connection_rng);
                                 }
                             }
                             break; // Only form one connection per activation
@@ -208,7 +213,8 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
                     for (size_t i = 0; i < MAX_OUTPUT_TARGETS; ++i) {
                         uint32_t output_target = brain.neurons[neuron_index].output_targets[i];
                         if (output_target != 0) {
-                            TargetedActivation output(output_target, Activation(1.0f, current_timestamp, target_address));
+                            // generate the activation in the branch for the terminal we're connected to
+                            TargetedActivation output(get_terminal_branch(output_target), Activation(1.0f, current_timestamp, output_target));
                             
                             // Check if this goes to same shard or different shard
                             if (ShardedMessageProcessor::get_shard_index(output_target) == 
@@ -245,6 +251,25 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
                     cross_shard_activations.push_back(output);
                 }
                 
+                // apply hebbian learning to this branch
+                constexpr float LEARNING_RATE = 0.01f;
+                for (size_t act_idx = 0; act_idx < activations.size(); ++act_idx) {
+                    const auto& activation = activations[act_idx];
+                    if (current_timestamp >= activation.timestamp && 
+                        current_timestamp <= activation.timestamp + timing_window_) {
+                        
+                        // Strengthen weights that contributed to this branch
+                        if (activation_contributed[act_idx]) {
+                            brain.weights[activation.source_address] += LEARNING_RATE * activation.value;
+                            brain.weights[activation.source_address] = std::min(brain.weights[activation.source_address], 2.0f); // Cap at 2.0
+                        } else {
+                            // Slightly weaken weights when not contributing
+                            brain.weights[activation.source_address] -= LEARNING_RATE * 0.1f;
+                            brain.weights[activation.source_address] = std::max(brain.weights[activation.source_address], 0.1f); // Floor at 0.1
+                        }
+                    }
+                }
+
                 // Update last activation time for this branch
                 brain.last_activations[target_address >> ACTIVATION_TIME_SHIFT] = current_timestamp;
             }

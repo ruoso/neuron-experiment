@@ -88,7 +88,7 @@ void populate_sensor_grid(SensorGrid& sensor_grid,
 }
 
 void assign_dendrites_to_sensors(SensorGrid& sensor_grid,
-                                const Brain& brain,
+                                Brain& brain,
                                 float connection_radius,
                                 uint32_t random_seed) {
     
@@ -114,6 +114,10 @@ void assign_dendrites_to_sensors(SensorGrid& sensor_grid,
         std::vector<uint32_t> nearby_dendrites;
         for (const auto& result : search_results) {
             if (is_terminal_address(result.item_address)) {
+                // check that weight is zero, since we only want unconnected dendrites
+                if (brain.weights[result.item_address] != 0.0f) {
+                    continue; // Skip connected dendrites
+                }
                 nearby_dendrites.push_back(result.item_address);
             }
         }
@@ -137,6 +141,9 @@ void assign_dendrites_to_sensors(SensorGrid& sensor_grid,
                  ++mode_dendrite_index, ++dendrite_index) {
                 
                 mode.target_dendrites[mode_dendrite_index] = nearby_dendrites[dendrite_index];
+                // now assign a weight to the dendrite, using a normal distribution
+                float weight = std::normal_distribution<float>(0.5f, 0.167f)(rng);
+                brain.weights[nearby_dendrites[dendrite_index]] = weight;
             }
         }
     }

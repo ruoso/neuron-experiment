@@ -64,7 +64,7 @@ struct RippleEffect {
     uint32_t start_time;
     
     RippleEffect(int x, int y, CellSource source, uint32_t time) 
-        : center_x(x), center_y(y), current_radius(0.0f), max_radius(10.0f), 
+        : center_x(x), center_y(y), current_radius(0.0f), max_radius(4.0f), 
           source_type(source), start_time(time) {}
 };
 
@@ -466,7 +466,7 @@ public:
     
     void update_ripples() {
         uint32_t current_timestamp = simulation_timestamp_.load();
-        constexpr uint32_t RIPPLE_DURATION = 10;  // simulation steps to complete
+        constexpr uint32_t RIPPLE_DURATION = 4;  // simulation steps to complete
         
         // Update existing ripples and activate grid cells
         for (auto& ripple : active_ripples_) {
@@ -576,7 +576,7 @@ public:
             cell.activation_sent = false;
             
             // Create ripple effect
-            active_ripples_.emplace_back(grid_x, grid_y, CellSource::USER, current_timestamp);
+            //active_ripples_.emplace_back(grid_x, grid_y, CellSource::USER, current_timestamp);
             
             spdlog::info("Scheduled activation at point {}/12: grid=({}, {}), angle={:.1f}°", 
                         current_schedule_point_ + 1, grid_x, grid_y, angle * 180.0f / M_PI);
@@ -750,7 +750,7 @@ public:
             grid_[grid_y][grid_x].activation_sent = false;  // Reset to allow new activation
             
             // Create ripple effect
-            active_ripples_.emplace_back(grid_x, grid_y, CellSource::USER, simulation_timestamp_.load());
+            //active_ripples_.emplace_back(grid_x, grid_y, CellSource::USER, simulation_timestamp_.load());
             
             spdlog::debug("User activated cell ({}, {}) at screen pos ({}, {})", grid_x, grid_y, x, y);
         }
@@ -784,7 +784,7 @@ public:
         update_ripples();
         
         // 5. Process scheduled activations
-        process_scheduled_activations();
+        //process_scheduled_activations();
     }
     
     void fade_grid() {
@@ -886,7 +886,7 @@ public:
             grid_[clamped_grid_y][clamped_grid_x].activation_sent = false;  // Reset to allow new activation
             
             // Create ripple effect
-            active_ripples_.emplace_back(clamped_grid_x, clamped_grid_y, CellSource::ACTUATOR, simulation_timestamp_.load());
+            //active_ripples_.emplace_back(clamped_grid_x, clamped_grid_y, CellSource::ACTUATOR, simulation_timestamp_.load());
         }
     }
     
