@@ -91,20 +91,10 @@ void World::apply_motor_force(float left_force, float right_force) {
 }
 
 bool World::consume_if_in_range() {
-    spdlog::debug("Eat action triggered at position ({:.2f}, {:.2f})", 
-                 creature_state_.position.x, creature_state_.position.y);
-    
-    float closest_distance = 1000.0f;
-    Vec2 closest_fruit_pos;
-    
     for (auto& fruit : fruits_) {
         if (!fruit.available) continue;
         
         float distance = wrap_distance(creature_state_.position, fruit.position);
-        if (distance < closest_distance) {
-            closest_distance = distance;
-            closest_fruit_pos = fruit.position;
-        }
         
         if (distance <= config_.creature_eat_radius) {
             creature_state_.hunger = std::max(0.0f, creature_state_.hunger - fruit.satiation_value);
@@ -116,8 +106,6 @@ bool World::consume_if_in_range() {
         }
     }
     
-    spdlog::debug("No fruit in range. Closest fruit at ({:.2f}, {:.2f}), distance: {:.2f}, eat_radius: {:.2f}", 
-                 closest_fruit_pos.x, closest_fruit_pos.y, closest_distance, config_.creature_eat_radius);
     return false;
 }
 
@@ -246,17 +234,36 @@ void World::update_trees(uint32_t tick) {
                 break;
                 
             case TreeLifecycleState::DORMANT:
-                if (tree.state.state_timer > 30.0f) {
-                    tree.state.lifecycle_state = TreeLifecycleState::MATURE;
-                    tree.state.state_timer = 0.0f;
+                if (tree.state.state_timer > 10.0f) {
+                    // Tree becomes old and dies - mark for removal
+                    tree.tree_id = 0; // Use tree_id = 0 to mark for removal
                 }
                 break;
         }
         
-        // Update color if state changed
-        if (old_state != tree.state.lifecycle_state) {
-            tree.update_color_for_state();
-        }
+        // Update color based on age (always, since it's linear with age)
+        tree.update_color_for_state();
+    }
+    
+    // Remove trees that have completed their lifecycle
+    size_t trees_before = trees_.size();
+    trees_.erase(std::remove_if(trees_.begin(), trees_.end(),
+        [](const Tree& tree) { return tree.tree_id == 0; }),
+        trees_.end());
+    size_t trees_after = trees_.size();
+    
+    if (trees_before != trees_after) {
+        spdlog::info("Removed {} old trees. Total trees: {} -> {}", 
+                    trees_before - trees_after, trees_before, trees_after);
+    }
+    
+    // Spawn new trees to maintain stable population
+    // Target: maintain around 15-20 trees by spawning more frequently
+    if (trees_.size() < config_.max_trees && uniform_dist_(rng_) < 0.05f) {
+        float x = uniform_dist_(rng_) * config_.width;
+        float y = uniform_dist_(rng_) * config_.height;
+        add_tree(Vec2(x, y));
+        spdlog::info("Spawned new tree at ({:.2f}, {:.2f}). Total trees: {}", x, y, trees_.size());
     }
 }
 
@@ -264,9 +271,15 @@ void World::update_fruits(uint32_t tick) {
     for (auto& fruit : fruits_) {
         if (!fruit.available) continue;
         
-        fruit.maturity = std::min(1.0f, fruit.maturity + config_.simulation_dt * 0.1f);
-        fruit.update_satiation(config_.fruit_max_satiation);
-        fruit.update_color_for_maturity();
+        fruit.maturity = std::min(1.5f, fruit.maturity + config_.simulation_dt * 0.02f);
+        
+        // Mark fruit for removal if it goes past maximum maturity (overripe)
+        if (fruit.maturity > 1.0f) {
+            fruit.available = false; // Mark as unavailable (will be removed)
+        } else {
+            fruit.update_satiation(config_.fruit_max_satiation);
+            fruit.update_color_for_maturity();
+        }
     }
     
     size_t fruits_before = fruits_.size();
@@ -276,7 +289,7 @@ void World::update_fruits(uint32_t tick) {
     size_t fruits_after = fruits_.size();
     
     if (fruits_before != fruits_after) {
-        spdlog::info("Removed {} consumed fruits. Total fruits: {} -> {}", 
+        spdlog::info("Removed {} fruits (consumed/overripe). Total fruits: {} -> {}", 
                     fruits_before - fruits_after, fruits_before, fruits_after);
     }
 }

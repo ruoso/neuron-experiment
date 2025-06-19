@@ -32,15 +32,10 @@ void Creature::update(uint32_t tick, World& world) {
     world.set_creature_orientation(state_.orientation);
     world.apply_motor_force(motor_output_.left_force, motor_output_.right_force);
     
-    if (motor_output_.eat_action) {
-        spdlog::debug("Processing eat action in creature update");
-        if (world.consume_if_in_range()) {
-            last_satiation_spike_ = 1.0f;
-            spdlog::info("Creature successfully consumed fruit");
-        } else {
-            spdlog::debug("Eat action failed - no fruit in range");
-        }
-        motor_output_.eat_action = false; // Reset after processing
+    // Automatically eat any fruit in range
+    if (world.consume_if_in_range()) {
+        last_satiation_spike_ = 1.0f;
+        spdlog::info("Creature automatically consumed fruit");
     }
     
     // Debug: Log creature state periodically

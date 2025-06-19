@@ -92,19 +92,35 @@ void CreatureExperiment::initialize_world() {
         float x = 10.0f + (i % 5) * 20.0f + (rand() % 10 - 5);
         float y = 10.0f + (i / 5) * 20.0f + (rand() % 10 - 5);
         world_->add_tree(Vec2(x, y));
-    }
-    
-    for (int i = 0; i < 30; ++i) {
-        float x = rand() % 100;
-        float y = rand() % 100;
-        world_->add_fruit(Vec2(x, y), 0);
-        // Set initial maturity so fruits are visible from start
-        auto& fruits = const_cast<std::vector<Fruit>&>(world_->get_fruits());
-        if (!fruits.empty()) {
-            fruits.back().maturity = 0.1f + (rand() % 90) / 100.0f; // 0.1 to 1.0
-            fruits.back().update_color_for_maturity();
+        
+        // Set varied initial age/maturity for trees
+        auto& trees = const_cast<std::vector<Tree>&>(world_->get_trees());
+        if (!trees.empty()) {
+            Tree& tree = trees.back();
+            // Randomize age between 0 and 44 seconds (80% of full lifecycle)
+            float random_age = (rand() % 4400) / 100.0f; // 0.0 to 44.0 seconds
+            tree.state.age = random_age;
+            
+            // Set appropriate state and state_timer based on age
+            if (random_age < 10.0f) {
+                tree.state.lifecycle_state = TreeLifecycleState::SEEDLING;
+                tree.state.state_timer = random_age;
+            } else if (random_age < 25.0f) {
+                tree.state.lifecycle_state = TreeLifecycleState::MATURE;
+                tree.state.state_timer = random_age - 10.0f;
+            } else if (random_age < 45.0f) {
+                tree.state.lifecycle_state = TreeLifecycleState::FRUITING;
+                tree.state.state_timer = random_age - 25.0f;
+            } else {
+                tree.state.lifecycle_state = TreeLifecycleState::DORMANT;
+                tree.state.state_timer = random_age - 45.0f;
+            }
+            
+            tree.update_color_for_state();
         }
     }
+    
+    // Fruits will be spawned naturally by trees during their fruiting phase
     
     spdlog::info("World initialized with {} trees and {} fruits", 
                 world_->get_trees().size(), world_->get_fruits().size());
@@ -174,16 +190,7 @@ void CreatureExperiment::handle_keypress(SDL_Keycode key, bool pressed) {
             break;
         
         
-        case SDLK_e: {
-            if (pressed) {
-                spdlog::info("E key pressed - attempting to eat");
-                MotorOutput output = creature_->get_motor_output();
-                output.eat_action = true;
-                creature_->set_motor_output(output);
-                spdlog::debug("Set eat_action to true on motor output");
-            }
-            break;
-        }
+        // E key removed - eating is now automatic when in range
     }
 }
 
@@ -194,9 +201,8 @@ void CreatureExperiment::update() {
     if (elapsed.count() >= 16) {
         simulation_tick_++;
         
-        // Update motor output based on current activations, preserving eat action
-        MotorOutput current_output = creature_->get_motor_output();
-        MotorOutput motor_output(left_motor_activation_, right_motor_activation_, current_output.eat_action);
+        // Update motor output based on current activations
+        MotorOutput motor_output(left_motor_activation_, right_motor_activation_, false);
         creature_->set_motor_output(motor_output);
         
         creature_->update(simulation_tick_, *world_);
@@ -496,27 +502,17 @@ void CreatureExperiment::render_debug_info() {
 }
 
 void CreatureExperiment::get_tree_color(const Tree& tree, uint8_t& r, uint8_t& g, uint8_t& b) const {
-    switch (tree.state.lifecycle_state) {
-        case TreeLifecycleState::SEEDLING:
-            r = 100; g = 200; b = 100;
-            break;
-        case TreeLifecycleState::MATURE:
-            r = 80; g = 160; b = 80;
-            break;
-        case TreeLifecycleState::FRUITING:
-            r = 60; g = 140; b = 200;
-            break;
-        case TreeLifecycleState::DORMANT:
-            r = 60; g = 100; b = 60;
-            break;
-    }
+    // Use the linear color that was calculated in update_color_for_state()
+    r = static_cast<uint8_t>(tree.color.r * 255.0f);
+    g = static_cast<uint8_t>(tree.color.g * 255.0f);
+    b = static_cast<uint8_t>(tree.color.b * 255.0f);
 }
 
 void CreatureExperiment::get_fruit_color(const Fruit& fruit, uint8_t& r, uint8_t& g, uint8_t& b) const {
-    uint8_t intensity = static_cast<uint8_t>(255 * fruit.maturity);
-    r = std::max(100, static_cast<int>(intensity));
-    g = std::max(50, static_cast<int>(intensity * 0.5f));
-    b = 50;
+    // Use the linear color that was calculated in update_color_for_maturity()
+    r = static_cast<uint8_t>(fruit.color.r * 255.0f);
+    g = static_cast<uint8_t>(fruit.color.g * 255.0f);
+    b = static_cast<uint8_t>(fruit.color.b * 255.0f);
 }
 
 void CreatureExperiment::cleanup() {
