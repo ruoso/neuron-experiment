@@ -24,7 +24,8 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 
 add_subdirectory(src/libs/neuronlib)
 add_subdirectory(src/libs/experimentbase)
-add_subdirectory(src/app)
+add_subdirectory(src/neuron_grid_experiment)
+add_subdirectory(src/neuron-creature-experiment)
 
 enable_testing()
 add_subdirectory(tests)
