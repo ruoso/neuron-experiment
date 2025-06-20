@@ -57,8 +57,8 @@ void NeuralSimulation::stop() {
 void NeuralSimulation::initialize_brain() {
     spdlog::info("Initializing neural network...");
     
-    // Create a simple 3D flow field
-    FlowField3D flow_field(-1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f, 0.4f, 0.4f, 0.1f);
+    // Create a simple 3D flow field with more internal processing space
+    FlowField3D flow_field(-1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f, 0.3f, 0.2f, 0.1f);
     spdlog::debug("Flow field created: bounds=({}, {}, {}) to ({}, {}, {})", 
                  flow_field.min_x, flow_field.min_y, flow_field.min_z,
                  flow_field.max_x, flow_field.max_y, flow_field.max_z);

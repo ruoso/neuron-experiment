@@ -4,20 +4,39 @@
 #include <spdlog/sinks/basic_file_sink.h>
 #include <iostream>
 #include <cmath>
+#include <thread>
+#include <algorithm>
 
 namespace neuron_creature_experiment {
 
 CreatureExperiment::CreatureExperiment()
     : window_(nullptr), renderer_(nullptr), running_(false),
       camera_position_(50.0f, 50.0f), simulation_tick_(0),
-      show_debug_info_(true), paused_(false),
-      left_motor_activation_(0.0f), right_motor_activation_(0.0f) {
+      show_debug_info_(true), paused_(false), neural_mode_(true),
+      left_motor_activation_(0.0f), right_motor_activation_(0.0f),
+      left_motor_feedback_(0.0f), right_motor_feedback_(0.0f),
+      left_motor_sent_(false), right_motor_sent_(false), vision_activation_counter_(0),
+      left_motor_activators_(0.0f), left_motor_suppressors_(0.0f),
+      right_motor_activators_(0.0f), right_motor_suppressors_(0.0f) {
     
     initialize_logging();
+    
+    // Initialize neural simulation
+    neural_sim_.initialize();
+    
+    // Set up firing callback for visualization
+    neural_sim_.set_firing_callback([this](const std::vector<NeuronFiringEvent>& events) {
+        // Neural firing events are automatically handled by the base system
+    });
+    
+    // Start neural simulation threads
+    neural_sim_.start();
+    
     last_update_ = std::chrono::steady_clock::now();
 }
 
 CreatureExperiment::~CreatureExperiment() {
+    neural_sim_.stop();
     cleanup();
 }
 
@@ -69,6 +88,12 @@ bool CreatureExperiment::initialize() {
         return false;
     }
     spdlog::debug("Main renderer created successfully");
+    
+    // Initialize brain visualization
+    if (!brain_viz_.initialize()) {
+        spdlog::error("Brain visualization initialization failed");
+        return false;
+    }
     
     initialize_world();
     
@@ -195,14 +220,29 @@ void CreatureExperiment::handle_keypress(SDL_Keycode key, bool pressed) {
 }
 
 void CreatureExperiment::update() {
-    auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_update_);
-    
-    if (elapsed.count() >= 16) {
+    // Wait for neural simulation to be ready, then advance
+    if (neural_sim_.is_ready_to_advance()) {
         simulation_tick_++;
         
-        // Update motor output based on current activations
-        MotorOutput motor_output(left_motor_activation_, right_motor_activation_, false);
+        // Generate sensor activations from creature state
+        if (neural_mode_) {
+            generate_sensor_activations();
+        }
+        
+        // Process actuator outputs and combine with manual input
+        float neural_left = 0.0f, neural_right = 0.0f;
+        if (neural_mode_) {
+            process_actuator_outputs();
+            neural_left = left_motor_feedback_;
+            neural_right = right_motor_feedback_;
+        }
+        
+        // Combine neural and manual control (max of both)
+        float combined_left = std::max(left_motor_activation_, neural_left);
+        float combined_right = std::max(right_motor_activation_, neural_right);
+        
+        // Update motor output
+        MotorOutput motor_output(combined_left, combined_right, false);
         creature_->set_motor_output(motor_output);
         
         creature_->update(simulation_tick_, *world_);
@@ -210,7 +250,36 @@ void CreatureExperiment::update() {
         
         update_camera();
         
-        last_update_ = now;
+        // Advance neural simulation
+        neural_sim_.advance_timestamp();
+        
+        // Update charts synchronized with simulation timestamps
+        brain_viz_.update_charts();
+        
+        // Fade motor feedback for next cycle
+        left_motor_feedback_ *= 0.75f;
+        right_motor_feedback_ *= 0.75f;
+        
+        // Fade visualization values
+        left_motor_activators_ *= 0.85f;
+        left_motor_suppressors_ *= 0.85f;
+        right_motor_activators_ *= 0.85f;
+        right_motor_suppressors_ *= 0.85f;
+        
+        if (left_motor_feedback_ < 0.01f) {
+            left_motor_feedback_ = 0.0f;
+            left_motor_sent_ = false;
+        }
+        if (right_motor_feedback_ < 0.01f) {
+            right_motor_feedback_ = 0.0f;
+            right_motor_sent_ = false;
+        }
+        
+        // Clear visualization values when very small
+        if (left_motor_activators_ < 0.01f) left_motor_activators_ = 0.0f;
+        if (left_motor_suppressors_ < 0.01f) left_motor_suppressors_ = 0.0f;
+        if (right_motor_activators_ < 0.01f) right_motor_activators_ = 0.0f;
+        if (right_motor_suppressors_ < 0.01f) right_motor_suppressors_ = 0.0f;
         
         if (simulation_tick_ % 60 == 0) {
             spdlog::debug("Simulation tick: {}, Creature pos: ({:.2f}, {:.2f})", 
@@ -218,6 +287,9 @@ void CreatureExperiment::update() {
                          creature_->get_position().x, 
                          creature_->get_position().y);
         }
+    } else {
+        // Sleep briefly to avoid busy-waiting
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 }
 
@@ -251,12 +323,14 @@ void CreatureExperiment::render() {
     render_creature();
     render_creature_vision();
     render_sensor_strips();
+    render_neural_overlay();
     
     if (show_debug_info_) {
         render_debug_info();
     }
     
     SDL_RenderPresent(renderer_);
+    render_visualization();
 }
 
 void CreatureExperiment::render_background() {
@@ -515,7 +589,298 @@ void CreatureExperiment::get_fruit_color(const Fruit& fruit, uint8_t& r, uint8_t
     b = static_cast<uint8_t>(fruit.color.b * 255.0f);
 }
 
+void CreatureExperiment::generate_sensor_activations() {
+    std::vector<SensorActivation> activations;
+    uint32_t current_timestamp = neural_sim_.get_current_timestamp();
+    
+    // Get sensor data from creature
+    SensorData sensor_data = creature_->get_sensor_data(*world_);
+    
+    // 1. Vision sensor activations (64 strips × 3 colors = 192 sensors) - only every 10 ticks
+    vision_activation_counter_++;
+    if (vision_activation_counter_ >= 10) {
+        vision_activation_counter_ = 0;
+        
+        const auto& vision_samples = sensor_data.vision_samples;
+        for (int strip = 0; strip < static_cast<int>(vision_samples.size()); ++strip) {
+            const auto& sample = vision_samples[strip];
+            
+            // Generate R, G, B activations for this strip
+            float intensities[3] = {sample.blended_color.r, sample.blended_color.g, sample.blended_color.b};
+            
+            for (int color = 0; color < 3; ++color) {
+                if (intensities[color] > 0.01f) {
+                    uint32_t sensor_index = map_vision_strip_to_sensor(strip, color);
+                    uint8_t mode_bitmap = 0;
+                    
+                    // Set mode based on intensity
+                    float intensity = intensities[color];
+                    if (intensity > 0.75f) mode_bitmap |= (1 << 0);        // Mode 0: Very bright
+                    else if (intensity > 0.5f) mode_bitmap |= (1 << 1);   // Mode 1: Bright
+                    else if (intensity > 0.25f) mode_bitmap |= (1 << 2);  // Mode 2: Medium
+                    else mode_bitmap |= (1 << 3);                         // Mode 3: Dim
+                    
+                    activations.emplace_back(sensor_index, mode_bitmap, intensity);
+                }
+            }
+        }
+    }
+    
+    // 2. Hunger sensor activation - only every 10 ticks (same as vision)
+    if (vision_activation_counter_ == 0) {
+        float hunger = sensor_data.hunger_level;
+        if (hunger > 0.01f) {
+            uint32_t hunger_sensor = HUNGER_SENSOR_Y * NEURAL_GRID_SIZE + HUNGER_SENSOR_X;
+            uint8_t mode_bitmap = 0;
+            
+            if (hunger > 0.75f) mode_bitmap |= (1 << 0);
+            else if (hunger > 0.5f) mode_bitmap |= (1 << 1);
+            else if (hunger > 0.25f) mode_bitmap |= (1 << 2);
+            else mode_bitmap |= (1 << 3);
+            
+            activations.emplace_back(hunger_sensor, mode_bitmap, hunger);
+        }
+        
+        // 3. Satiation sensor activation - only every 10 ticks (same as vision)
+        float satiation = sensor_data.last_satiation;
+        if (satiation > 0.01f) {
+            uint32_t satiation_sensor = SATIATION_SENSOR_Y * NEURAL_GRID_SIZE + SATIATION_SENSOR_X;
+            uint8_t mode_bitmap = 0;
+            
+            if (satiation > 0.75f) mode_bitmap |= (1 << 0);
+            else if (satiation > 0.5f) mode_bitmap |= (1 << 1);
+            else if (satiation > 0.25f) mode_bitmap |= (1 << 2);
+            else mode_bitmap |= (1 << 3);
+            
+            activations.emplace_back(satiation_sensor, mode_bitmap, satiation);
+        }
+        
+        // 4. Motor feedback sensors (if motors activated last cycle) - only every 10 ticks
+        if (!left_motor_sent_ && left_motor_feedback_ > 0.01f) {
+            for (int y = 0; y < MOTOR_REGION_SIZE; ++y) {
+                for (int x = 0; x < MOTOR_REGION_SIZE; ++x) {
+                    uint32_t sensor_index = map_motor_region_to_sensor(false, x, y);
+                    activations.emplace_back(sensor_index, 0xF, left_motor_feedback_); // All modes active for feedback
+                }
+            }
+            left_motor_sent_ = true;
+        }
+        
+        if (!right_motor_sent_ && right_motor_feedback_ > 0.01f) {
+            for (int y = 0; y < MOTOR_REGION_SIZE; ++y) {
+                for (int x = 0; x < MOTOR_REGION_SIZE; ++x) {
+                    uint32_t sensor_index = map_motor_region_to_sensor(true, x, y);
+                    activations.emplace_back(sensor_index, 0xF, right_motor_feedback_); // All modes active for feedback
+                }
+            }
+            right_motor_sent_ = true;
+        }
+    }
+    
+    // Process sensor activations and send to neural network
+    auto targeted_activations = process_sensor_activations(neural_sim_.get_brain().sensor_grid, activations, current_timestamp);
+    
+    // Track sensor activation count for chart
+    brain_viz_.track_sensor_activations(static_cast<int>(activations.size()));
+    
+    if (!targeted_activations.empty()) {
+        spdlog::debug("Generated {} sensor activations -> {} targeted activations", 
+                     activations.size(), targeted_activations.size());
+        neural_sim_.send_sensor_activations(targeted_activations);
+    }
+}
+
+void CreatureExperiment::process_actuator_outputs() {
+    // Get all actuation events from neural network
+    auto actuation_events = neural_sim_.get_actuator_events();
+    
+    if (!actuation_events.empty()) {
+        spdlog::debug("Processing {} actuator outputs", actuation_events.size());
+    }
+    
+    float left_motor_activators = 0.0f;
+    float left_motor_suppressors = 0.0f;
+    float right_motor_activators = 0.0f;
+    float right_motor_suppressors = 0.0f;
+    
+    for (const auto& event : actuation_events) {
+        // Convert world position to grid coordinates (same mapping as grid experiment)
+        float norm_x = (event.position.x - (-1.0f)) / (1.0f - (-1.0f));  // Normalize to 0-1
+        float norm_y = (event.position.y - (-1.0f)) / (1.0f - (-1.0f));  // Normalize to 0-1
+        
+        int grid_x = static_cast<int>(norm_x * NEURAL_GRID_SIZE);
+        int grid_y = static_cast<int>(norm_y * NEURAL_GRID_SIZE);
+        
+        // Check if this falls in left motor region
+        if (grid_x >= LEFT_MOTOR_X && grid_x < LEFT_MOTOR_X + MOTOR_REGION_SIZE &&
+            grid_y >= LEFT_MOTOR_Y && grid_y < LEFT_MOTOR_Y + MOTOR_REGION_SIZE) {
+            
+            // Calculate relative position within the motor region
+            int rel_x = grid_x - LEFT_MOTOR_X;
+            int rel_y = grid_y - LEFT_MOTOR_Y;
+            
+            // Checkerboard pattern: if (x + y) is even, it's an activator; if odd, it's a suppressor
+            if ((rel_x + rel_y) % 2 == 0) {
+                left_motor_activators += 1.0f;
+                spdlog::debug("Left motor ACTIVATED by neuron at ({:.3f}, {:.3f}) -> grid ({}, {}) rel ({}, {})", 
+                             event.position.x, event.position.y, grid_x, grid_y, rel_x, rel_y);
+            } else {
+                left_motor_suppressors += 1.0f;
+                spdlog::debug("Left motor SUPPRESSED by neuron at ({:.3f}, {:.3f}) -> grid ({}, {}) rel ({}, {})", 
+                             event.position.x, event.position.y, grid_x, grid_y, rel_x, rel_y);
+            }
+        }
+        
+        // Check if this falls in right motor region  
+        if (grid_x >= RIGHT_MOTOR_X && grid_x < RIGHT_MOTOR_X + MOTOR_REGION_SIZE &&
+            grid_y >= RIGHT_MOTOR_Y && grid_y < RIGHT_MOTOR_Y + MOTOR_REGION_SIZE) {
+            
+            // Calculate relative position within the motor region
+            int rel_x = grid_x - RIGHT_MOTOR_X;
+            int rel_y = grid_y - RIGHT_MOTOR_Y;
+            
+            // Checkerboard pattern: if (x + y) is even, it's an activator; if odd, it's a suppressor
+            if ((rel_x + rel_y) % 2 == 0) {
+                right_motor_activators += 1.0f;
+                spdlog::debug("Right motor ACTIVATED by neuron at ({:.3f}, {:.3f}) -> grid ({}, {}) rel ({}, {})", 
+                             event.position.x, event.position.y, grid_x, grid_y, rel_x, rel_y);
+            } else {
+                right_motor_suppressors += 1.0f;
+                spdlog::debug("Right motor SUPPRESSED by neuron at ({:.3f}, {:.3f}) -> grid ({}, {}) rel ({}, {})", 
+                             event.position.x, event.position.y, grid_x, grid_y, rel_x, rel_y);
+            }
+        }
+    }
+    
+    // Calculate net motor activation: activators - suppressors, clamped to [0, 1]
+    float left_net_activation = std::max(0.0f, std::min(1.0f, left_motor_activators - left_motor_suppressors));
+    float right_net_activation = std::max(0.0f, std::min(1.0f, right_motor_activators - right_motor_suppressors));
+    
+    // Store neural motor activations for combining with manual input
+    left_motor_feedback_ = left_net_activation;
+    right_motor_feedback_ = right_net_activation;
+    
+    // Store for visualization (with decay)
+    left_motor_activators_ = left_motor_activators;
+    left_motor_suppressors_ = left_motor_suppressors;
+    right_motor_activators_ = right_motor_activators;
+    right_motor_suppressors_ = right_motor_suppressors;
+    
+    if (left_motor_activators > 0 || left_motor_suppressors > 0 || right_motor_activators > 0 || right_motor_suppressors > 0) {
+        spdlog::debug("Motor summary: Left({:.1f}a - {:.1f}s = {:.2f}), Right({:.1f}a - {:.1f}s = {:.2f})",
+                     left_motor_activators, left_motor_suppressors, left_net_activation,
+                     right_motor_activators, right_motor_suppressors, right_net_activation);
+    }
+}
+
+uint32_t CreatureExperiment::map_vision_strip_to_sensor(int strip_index, int color_channel) const {
+    // Map vision strips to top rows of sensor grid
+    // 64 strips × 3 colors = 192 sensors across top 6 rows
+    int sensors_per_row = NEURAL_GRID_SIZE;
+    
+    int linear_index = strip_index * VISION_SENSORS_PER_STRIP + color_channel;
+    int row = linear_index / sensors_per_row;
+    int col = linear_index % sensors_per_row;
+    
+    return row * NEURAL_GRID_SIZE + col;
+}
+
+uint32_t CreatureExperiment::map_motor_region_to_sensor(bool is_right_motor, int x_offset, int y_offset) const {
+    int base_x = is_right_motor ? RIGHT_MOTOR_X : LEFT_MOTOR_X;
+    int base_y = is_right_motor ? RIGHT_MOTOR_Y : LEFT_MOTOR_Y;
+    
+    int grid_x = base_x + x_offset;
+    int grid_y = base_y + y_offset;
+    
+    return grid_y * NEURAL_GRID_SIZE + grid_x;
+}
+
+void CreatureExperiment::render_neural_overlay() {
+    // Get sensor data from creature
+    SensorData sensor_data = creature_->get_sensor_data(*world_);
+    
+    // Show hunger and satiation levels
+    float hunger = sensor_data.hunger_level;
+    float satiation = sensor_data.last_satiation;
+    
+    // Hunger bar (red)
+    SDL_SetRenderDrawColor(renderer_, 255, 0, 0, 255);
+    SDL_Rect hunger_rect = {10, 750, static_cast<int>(200 * hunger), 20};
+    SDL_RenderFillRect(renderer_, &hunger_rect);
+    
+    // Satiation bar (green)
+    SDL_SetRenderDrawColor(renderer_, 0, 255, 0, 255);
+    SDL_Rect satiation_rect = {10, 775, static_cast<int>(200 * satiation), 20};
+    SDL_RenderFillRect(renderer_, &satiation_rect);
+    
+    // Left motor visualization - Activators (green) and Suppressors (red)
+    int left_base_x = 250;
+    int left_base_y = 750;
+    
+    // Left motor activators (green)
+    if (left_motor_activators_ > 0.01f) {
+        uint8_t intensity = static_cast<uint8_t>(std::min(255.0f, left_motor_activators_ * 64.0f)); // Scale for visibility
+        SDL_SetRenderDrawColor(renderer_, 0, intensity, 0, 255);
+        SDL_Rect left_act_rect = {left_base_x, left_base_y, 25, 20};
+        SDL_RenderFillRect(renderer_, &left_act_rect);
+    }
+    
+    // Left motor suppressors (red)
+    if (left_motor_suppressors_ > 0.01f) {
+        uint8_t intensity = static_cast<uint8_t>(std::min(255.0f, left_motor_suppressors_ * 64.0f)); // Scale for visibility
+        SDL_SetRenderDrawColor(renderer_, intensity, 0, 0, 255);
+        SDL_Rect left_sup_rect = {left_base_x + 25, left_base_y, 25, 20};
+        SDL_RenderFillRect(renderer_, &left_sup_rect);
+    }
+    
+    // Left motor net result (cyan - shows final combined effect)
+    if (left_motor_feedback_ > 0.01f) {
+        uint8_t intensity = static_cast<uint8_t>(left_motor_feedback_ * 255);
+        SDL_SetRenderDrawColor(renderer_, 0, intensity, intensity, 255);
+        SDL_Rect left_net_rect = {left_base_x, left_base_y + 25, 50, 10};
+        SDL_RenderFillRect(renderer_, &left_net_rect);
+    }
+    
+    // Right motor visualization - Activators (green) and Suppressors (red)
+    int right_base_x = 320;
+    int right_base_y = 750;
+    
+    // Right motor activators (green)
+    if (right_motor_activators_ > 0.01f) {
+        uint8_t intensity = static_cast<uint8_t>(std::min(255.0f, right_motor_activators_ * 64.0f)); // Scale for visibility
+        SDL_SetRenderDrawColor(renderer_, 0, intensity, 0, 255);
+        SDL_Rect right_act_rect = {right_base_x, right_base_y, 25, 20};
+        SDL_RenderFillRect(renderer_, &right_act_rect);
+    }
+    
+    // Right motor suppressors (red)
+    if (right_motor_suppressors_ > 0.01f) {
+        uint8_t intensity = static_cast<uint8_t>(std::min(255.0f, right_motor_suppressors_ * 64.0f)); // Scale for visibility
+        SDL_SetRenderDrawColor(renderer_, intensity, 0, 0, 255);
+        SDL_Rect right_sup_rect = {right_base_x + 25, right_base_y, 25, 20};
+        SDL_RenderFillRect(renderer_, &right_sup_rect);
+    }
+    
+    // Right motor net result (cyan - shows final combined effect)
+    if (right_motor_feedback_ > 0.01f) {
+        uint8_t intensity = static_cast<uint8_t>(right_motor_feedback_ * 255);
+        SDL_SetRenderDrawColor(renderer_, 0, intensity, intensity, 255);
+        SDL_Rect right_net_rect = {right_base_x, right_base_y + 25, 50, 10};
+        SDL_RenderFillRect(renderer_, &right_net_rect);
+    }
+    
+    // Neural mode indicator
+    SDL_SetRenderDrawColor(renderer_, neural_mode_ ? 0 : 128, neural_mode_ ? 255 : 128, 0, 255);
+    SDL_Rect neural_rect = {400, 750, 100, 45};
+    SDL_RenderFillRect(renderer_, &neural_rect);
+}
+
+void CreatureExperiment::render_visualization() {
+    brain_viz_.render(neural_sim_);
+}
+
 void CreatureExperiment::cleanup() {
+    brain_viz_.cleanup();
     if (renderer_) {
         SDL_DestroyRenderer(renderer_);
         renderer_ = nullptr;

@@ -22,6 +22,7 @@ add_executable(creature-experiment
 target_link_libraries(creature-experiment
     neuron-creature-experiment
     neuronlib
+    experimentbase
     ${SDL2_LIBRARIES}
     spdlog::spdlog
 )

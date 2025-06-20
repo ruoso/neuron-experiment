@@ -39,12 +39,9 @@ Vec3 evaluate_flow_field(const FlowField3D& field, const Vec3& position) {
         flow_y /= magnitude;
     }
     
-    // Progressive bias towards output: stronger Z component as we approach output
-    float middle_section_length = output_section_start - input_section_end;
-    float progress = (position.z - input_section_end) / middle_section_length;
-    float z_bias = 0.1f + (0.9f * progress);  // Ranges from 0.1 to 0.5
-    
-    return {flow_x, flow_y, z_bias};
+    // No forward bias in the middle section - pure circular flow
+    // This allows signals to circulate indefinitely and take the longest paths
+    return {flow_x, flow_y, 0.0f};
 }
 
 } // namespace neuronlib
