@@ -597,4 +597,138 @@ BrainPtr populate_neuron_grid(
     return brain;
 }
 
+void initialize_brain_weights(Brain& brain, uint32_t random_seed) {
+    // Initialize random number generator for weights
+    std::mt19937 weight_rng(random_seed + 1000000);
+    std::normal_distribution<float> weight_dist(0.2f, 0.167f);
+    
+    // Initialize all weights to random values
+    for (uint32_t i = 0; i < MAX_ADDRESSES; ++i) {
+        // generate weights, but leave terminals at zero
+        if (is_terminal_address(i)) {
+            brain.weights[i] = 0.0f;  // Terminals start at zero, to allow checking for connections
+        } else {
+            float weight = weight_dist(weight_rng);
+            brain.weights[i] = std::max(0.0f, std::min(1.0f, weight));  // Clamp to [0,1] range
+        }
+    }
+}
+
+void populate_neurons_and_dendrites(Brain& brain, const FlowField3D& flow_field,
+                                   float dendrite_cone_angle, float dendrite_min_distance,
+                                   float dendrite_max_distance, uint32_t random_seed) {
+    // Initialize random number generator for thresholds
+    std::mt19937 threshold_rng(random_seed + 2000000);
+    std::uniform_real_distribution<float> threshold_dist(0.8f, 2.0f);
+    
+    // Calculate 3D grid dimensions - try to make it as cubic as possible
+    uint32_t cube_root = static_cast<uint32_t>(std::cbrt(MAX_NEURONS));
+    uint32_t grid_x = cube_root;
+    uint32_t grid_y = cube_root;
+    uint32_t grid_z = MAX_NEURONS / (grid_x * grid_y);
+    
+    // Adjust to use all available addresses
+    while (grid_x * grid_y * grid_z < MAX_NEURONS && grid_z < cube_root + 10) {
+        grid_z++;
+    }
+    
+    // Calculate spacing between neurons
+    float spacing_x = (flow_field.max_x - flow_field.min_x) / (grid_x - 1);
+    float spacing_y = (flow_field.max_y - flow_field.min_y) / (grid_y - 1);
+    float spacing_z = (flow_field.max_z - flow_field.min_z) / (grid_z - 1);
+    
+    // Create initial empty spatial grid with root branch
+    SpatialBranch root_branch;
+    root_branch.min_x = flow_field.min_x;
+    root_branch.min_y = flow_field.min_y;
+    root_branch.min_z = flow_field.min_z;
+    root_branch.max_x = flow_field.max_x;
+    root_branch.max_y = flow_field.max_y;
+    root_branch.max_z = flow_field.max_z;
+    
+    auto root_node = std::make_shared<SpatialNode>(std::move(root_branch));
+    auto spatial_grid = std::make_shared<SpatialGrid>();
+    spatial_grid->root = root_node;
+    spatial_grid->max_depth = 8;
+    
+    // Generate all spatial items (neurons + dendrite terminals)
+    std::vector<SpatialInsert> all_items;
+    
+    uint32_t neuron_count = 0;
+    for (uint32_t z = 0; z < grid_z && neuron_count < MAX_NEURONS; ++z) {
+        for (uint32_t y = 0; y < grid_y && neuron_count < MAX_NEURONS; ++y) {
+            for (uint32_t x = 0; x < grid_x && neuron_count < MAX_NEURONS; ++x) {
+                // Calculate neuron position
+                Vec3 neuron_position = {
+                    flow_field.min_x + x * spacing_x,
+                    flow_field.min_y + y * spacing_y,
+                    flow_field.min_z + z * spacing_z
+                };
+                
+                // Create neuron address (shifted left by dendrite bits to leave dendrite space)
+                uint32_t neuron_address = neuron_count << DENDRITE_ADDRESS_BITS;
+                
+                // Initialize neuron in brain
+                brain.neurons[neuron_count].position = neuron_position;
+                brain.neurons[neuron_count].output_direction = normalize_vector(evaluate_flow_field(flow_field, neuron_position));
+                brain.neurons[neuron_count].threshold = threshold_dist(threshold_rng);
+                // output_targets array is already zero-initialized by memset
+                
+                // Add neuron to spatial items
+                all_items.emplace_back(neuron_address, neuron_position);
+                
+                // Generate dendrite terminals for this neuron
+                auto terminals = generate_dendrite_terminals(
+                    neuron_address, neuron_position, flow_field,
+                    dendrite_cone_angle, dendrite_min_distance, dendrite_max_distance,
+                    random_seed + neuron_count);
+                
+                // Add all terminals to spatial items
+                for (const auto& terminal : terminals) {
+                    all_items.emplace_back(terminal.terminal_address, terminal.position);
+                }
+                
+                neuron_count++;
+            }
+        }
+    }
+    
+    // Insert all items into the spatial grid
+    brain.spatial_grid = insert_batch(spatial_grid, all_items);
+}
+
+BrainPtr populate_neuron_grid_with_layout(
+    const FlowField3D& flow_field,
+    const std::vector<SensorPosition>& sensor_positions,
+    const std::vector<ActuatorPosition>& actuator_positions,
+    float neuron_threshold,
+    float dendrite_cone_angle,
+    float dendrite_min_distance,
+    float dendrite_max_distance,
+    float sensor_connection_radius,
+    uint32_t random_seed) {
+    
+    // Create brain
+    auto brain = std::make_unique<Brain>();
+    
+    // Initialize weights using shared function
+    initialize_brain_weights(*brain, random_seed);
+    
+    // Populate neurons and dendrites using shared function
+    populate_neurons_and_dendrites(*brain, flow_field, dendrite_cone_angle,
+                                  dendrite_min_distance, dendrite_max_distance, random_seed);
+    
+    // Populate sensor grid with custom positions
+    populate_sensor_grid_with_positions(brain->sensor_grid, sensor_positions);
+    
+    // Assign dendrites to sensor modes
+    assign_dendrites_to_sensors(brain->sensor_grid, *brain, 
+                               sensor_connection_radius, random_seed + 999999);
+    
+    // Mark actuator neurons with custom positions and tags
+    mark_actuator_neurons_with_positions(*brain, actuator_positions);
+    
+    return brain;
+}
+
 } // namespace neuronlib

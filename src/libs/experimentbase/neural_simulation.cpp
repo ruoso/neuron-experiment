@@ -41,6 +41,28 @@ void NeuralSimulation::initialize() {
     spdlog::info("Neural simulation initialized successfully");
 }
 
+void NeuralSimulation::initialize(const std::vector<SensorPosition>& sensor_positions, 
+                                 const std::vector<ActuatorPosition>& actuator_positions) {
+    spdlog::info("Initializing neural simulation with custom layout...");
+    
+    initialize_brain_with_layout(sensor_positions, actuator_positions);
+    
+    // Set up firing callback
+    message_processor_.set_neuron_firing_callback([this](const std::vector<NeuronFiringEvent>& events) {
+        std::lock_guard<std::mutex> lock(firing_mutex_);
+        for (const auto& event : events) {
+            recent_firings_.push_back(event);
+        }
+        
+        // Call external callback if set
+        if (firing_callback_) {
+            firing_callback_(events);
+        }
+    });
+    
+    spdlog::info("Neural simulation with custom layout initialized successfully");
+}
+
 void NeuralSimulation::start() {
     if (threads_running_.load()) {
         spdlog::warn("Neural simulation threads already running");
@@ -71,6 +93,28 @@ void NeuralSimulation::initialize_brain() {
     spdlog::info("  - Addressing: {} neuron bits, {} dendrite bits = {} max neurons", 
                  NEURON_ADDRESS_BITS, DENDRITE_ADDRESS_BITS, MAX_NEURONS);
     spdlog::info("  - Sensor grid: {}x{} = {} sensors", GRID_SIZE, GRID_SIZE, GRID_SIZE * GRID_SIZE);
+    spdlog::info("  - Neural network ready for processing");
+}
+
+void NeuralSimulation::initialize_brain_with_layout(const std::vector<SensorPosition>& sensor_positions, 
+                                                   const std::vector<ActuatorPosition>& actuator_positions) {
+    spdlog::info("Initializing neural network with custom layout...");
+    
+    // Create a simple 3D flow field with more internal processing space
+    FlowField3D flow_field(-1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f, 0.3f, 0.2f, 0.1f);
+    spdlog::debug("Flow field created: bounds=({}, {}, {}) to ({}, {}, {})", 
+                 flow_field.min_x, flow_field.min_y, flow_field.min_z,
+                 flow_field.max_x, flow_field.max_y, flow_field.max_z);
+    
+    // Create brain with custom sensor/actuator layout
+    brain_ = populate_neuron_grid_with_layout(flow_field, sensor_positions, actuator_positions,
+                                             1.0f, 45.0f, 0.1f, 0.5f, 0.3f, 12345);
+    
+    spdlog::info("Brain with custom layout initialized successfully:");
+    spdlog::info("  - Addressing: {} neuron bits, {} dendrite bits = {} max neurons", 
+                 NEURON_ADDRESS_BITS, DENDRITE_ADDRESS_BITS, MAX_NEURONS);
+    spdlog::info("  - Sensor positions: {} sensors", sensor_positions.size());
+    spdlog::info("  - Actuator positions: {} actuators", actuator_positions.size());
     spdlog::info("  - Neural network ready for processing");
 }
 

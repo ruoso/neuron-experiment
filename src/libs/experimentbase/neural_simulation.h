@@ -46,6 +46,8 @@ public:
     ~NeuralSimulation();
     
     void initialize();
+    void initialize(const std::vector<SensorPosition>& sensor_positions, 
+                   const std::vector<ActuatorPosition>& actuator_positions);
     void start();
     void stop();
     
@@ -69,6 +71,8 @@ public:
 
 private:
     void initialize_brain();
+    void initialize_brain_with_layout(const std::vector<SensorPosition>& sensor_positions, 
+                                     const std::vector<ActuatorPosition>& actuator_positions);
     void initialize_shard_threads();
     void stop_shard_threads();
     void shard_worker_loop(uint32_t shard_idx);

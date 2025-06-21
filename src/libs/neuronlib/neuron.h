@@ -15,6 +15,7 @@ struct Neuron {
     float threshold;
     uint32_t output_targets[MAX_OUTPUT_TARGETS];
     bool is_actuator;
+    uint8_t actuator_tag;  // Tag for actuator type (0=left_motor_activator, 1=left_motor_suppressor, etc.)
 };
 
 } // namespace neuronlib

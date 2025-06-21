@@ -7,10 +7,15 @@
 #include <thread>
 #include <algorithm>
 #include <fstream>
+#include <vector>
+#include <cstdint>
+#include <stdexcept>
+#include <cctype>
+#include <random>
 
 namespace neuron_creature_experiment {
 
-CreatureExperiment::CreatureExperiment()
+CreatureExperiment::CreatureExperiment(const std::string& layout_encoding)
     : window_(nullptr), renderer_(nullptr), running_(false),
       camera_position_(50.0f, 50.0f), simulation_tick_(0),
       show_debug_info_(true), paused_(false), neural_mode_(true),
@@ -19,12 +24,44 @@ CreatureExperiment::CreatureExperiment()
       left_motor_sent_(false), right_motor_sent_(false), vision_activation_counter_(0),
       left_motor_activators_(0.0f), left_motor_suppressors_(0.0f),
       right_motor_activators_(0.0f), right_motor_suppressors_(0.0f),
-      ticks_survived_(0), total_distance_moved_(0.0f), last_position_(50.0f, 50.0f) {
+      ticks_survived_(0), total_distance_moved_(0.0f), last_position_(50.0f, 50.0f),
+      layout_encoding_(layout_encoding) {
     
     initialize_logging();
     
-    // Initialize neural simulation
-    neural_sim_.initialize();
+    // Decode sensor/actuator layout
+    decode_layout(layout_encoding_);
+    
+    // Prepare sensor and actuator positions for neural simulation
+    std::vector<SensorPosition> sensor_positions;
+    std::vector<ActuatorPosition> actuator_positions;
+    
+    // Add vision sensors with tags
+    for (size_t i = 0; i < layout_.vision_sensors.size(); ++i) {
+        uint16_t sensor_tag = VISION_SENSOR_TAG_BASE + static_cast<uint16_t>(i);
+        sensor_positions.emplace_back(layout_.vision_sensors[i], sensor_tag);
+    }
+    
+    // Add hunger and satiation sensors
+    sensor_positions.emplace_back(layout_.hunger_sensor, HUNGER_SENSOR_TAG);
+    sensor_positions.emplace_back(layout_.satiation_sensor, SATIATION_SENSOR_TAG);
+    
+    // Add motor actuators with tags
+    for (const auto& activator_pos : layout_.left_motor_activators) {
+        actuator_positions.emplace_back(activator_pos, LEFT_MOTOR_ACTIVATOR_TAG);
+    }
+    for (const auto& suppressor_pos : layout_.left_motor_suppressors) {
+        actuator_positions.emplace_back(suppressor_pos, LEFT_MOTOR_SUPPRESSOR_TAG);
+    }
+    for (const auto& activator_pos : layout_.right_motor_activators) {
+        actuator_positions.emplace_back(activator_pos, RIGHT_MOTOR_ACTIVATOR_TAG);
+    }
+    for (const auto& suppressor_pos : layout_.right_motor_suppressors) {
+        actuator_positions.emplace_back(suppressor_pos, RIGHT_MOTOR_SUPPRESSOR_TAG);
+    }
+    
+    // Initialize neural simulation with custom layout
+    neural_sim_.initialize(sensor_positions, actuator_positions);
     
     // Set up firing callback for visualization
     neural_sim_.set_firing_callback([this](const std::vector<NeuronFiringEvent>& events) {
@@ -260,14 +297,15 @@ void CreatureExperiment::update() {
         float hunger = creature_->get_hunger();
         if (hunger >= 10.0f) {
             // Write survival summary and exit
-            std::ofstream summary_file("survival_summary.txt");
+            std::string filename = "survival_summary_" + get_layout_filename_suffix() + ".txt";
+            std::ofstream summary_file(filename);
             if (summary_file.is_open()) {
                 summary_file << ticks_survived_ << std::endl;
                 summary_file << total_distance_moved_ << std::endl;
                 summary_file << creature_->get_fruits_eaten() << std::endl;
                 summary_file.close();
-                spdlog::info("Creature died from hunger after {} ticks. Moved {:.2f} units, ate {} fruits. Summary written to survival_summary.txt", 
-                           ticks_survived_, total_distance_moved_, creature_->get_fruits_eaten());
+                spdlog::info("Creature died from hunger after {} ticks. Moved {:.2f} units, ate {} fruits. Summary written to {}", 
+                           ticks_survived_, total_distance_moved_, creature_->get_fruits_eaten(), filename);
             }
             running_ = false;
             return;
@@ -621,13 +659,13 @@ void CreatureExperiment::generate_sensor_activations() {
     // Get sensor data from creature
     SensorData sensor_data = creature_->get_sensor_data(*world_);
     
-    // 1. Vision sensor activations (64 strips × 3 colors = 192 sensors) - only every 10 ticks
+    // 1. Vision sensor activations (192 sensors using dynamic layout) - only every 10 ticks
     vision_activation_counter_++;
     if (vision_activation_counter_ >= 10) {
         vision_activation_counter_ = 0;
         
         const auto& vision_samples = sensor_data.vision_samples;
-        for (int strip = 0; strip < static_cast<int>(vision_samples.size()); ++strip) {
+        for (int strip = 0; strip < static_cast<int>(vision_samples.size()) && strip < 64; ++strip) {
             const auto& sample = vision_samples[strip];
             
             // Generate R, G, B activations for this strip
@@ -635,17 +673,20 @@ void CreatureExperiment::generate_sensor_activations() {
             
             for (int color = 0; color < 3; ++color) {
                 if (intensities[color] > 0.01f) {
-                    uint32_t sensor_index = map_vision_strip_to_sensor(strip, color);
-                    uint8_t mode_bitmap = 0;
-                    
-                    // Set mode based on intensity
-                    float intensity = intensities[color];
-                    if (intensity > 0.75f) mode_bitmap |= (1 << 0);        // Mode 0: Very bright
-                    else if (intensity > 0.5f) mode_bitmap |= (1 << 1);   // Mode 1: Bright
-                    else if (intensity > 0.25f) mode_bitmap |= (1 << 2);  // Mode 2: Medium
-                    else mode_bitmap |= (1 << 3);                         // Mode 3: Dim
-                    
-                    activations.emplace_back(sensor_index, mode_bitmap, intensity);
+                    // Map strip + color to sensor tag
+                    int sensor_idx = strip * 3 + color;
+                    if (sensor_idx < NUM_VISION_SENSORS) {
+                        uint16_t sensor_tag = VISION_SENSOR_TAG_BASE + static_cast<uint16_t>(sensor_idx);
+                        
+                        uint8_t mode_bitmap = 0;
+                        float intensity = intensities[color];
+                        if (intensity > 0.75f) mode_bitmap |= (1 << 0);        // Mode 0: Very bright
+                        else if (intensity > 0.5f) mode_bitmap |= (1 << 1);   // Mode 1: Bright
+                        else if (intensity > 0.25f) mode_bitmap |= (1 << 2);  // Mode 2: Medium
+                        else mode_bitmap |= (1 << 3);                         // Mode 3: Dim
+                        
+                        activations.emplace_back(sensor_tag, mode_bitmap, intensity);
+                    }
                 }
             }
         }
@@ -655,7 +696,6 @@ void CreatureExperiment::generate_sensor_activations() {
     if (vision_activation_counter_ == 0) {
         float hunger = sensor_data.hunger_level;
         if (hunger > 0.01f) {
-            uint32_t hunger_sensor = HUNGER_SENSOR_Y * NEURAL_GRID_SIZE + HUNGER_SENSOR_X;
             uint8_t mode_bitmap = 0;
             
             if (hunger > 0.75f) mode_bitmap |= (1 << 0);
@@ -663,13 +703,12 @@ void CreatureExperiment::generate_sensor_activations() {
             else if (hunger > 0.25f) mode_bitmap |= (1 << 2);
             else mode_bitmap |= (1 << 3);
             
-            activations.emplace_back(hunger_sensor, mode_bitmap, hunger);
+            activations.emplace_back(HUNGER_SENSOR_TAG, mode_bitmap, hunger);
         }
         
         // 3. Satiation sensor activation - only every 10 ticks (same as vision)
         float satiation = sensor_data.last_satiation;
         if (satiation > 0.01f) {
-            uint32_t satiation_sensor = SATIATION_SENSOR_Y * NEURAL_GRID_SIZE + SATIATION_SENSOR_X;
             uint8_t mode_bitmap = 0;
             
             if (satiation > 0.75f) mode_bitmap |= (1 << 0);
@@ -677,28 +716,7 @@ void CreatureExperiment::generate_sensor_activations() {
             else if (satiation > 0.25f) mode_bitmap |= (1 << 2);
             else mode_bitmap |= (1 << 3);
             
-            activations.emplace_back(satiation_sensor, mode_bitmap, satiation);
-        }
-        
-        // 4. Motor feedback sensors (if motors activated last cycle) - only every 10 ticks
-        if (!left_motor_sent_ && left_motor_feedback_ > 0.01f) {
-            for (int y = 0; y < MOTOR_REGION_SIZE; ++y) {
-                for (int x = 0; x < MOTOR_REGION_SIZE; ++x) {
-                    uint32_t sensor_index = map_motor_region_to_sensor(false, x, y);
-                    activations.emplace_back(sensor_index, 0xF, left_motor_feedback_); // All modes active for feedback
-                }
-            }
-            left_motor_sent_ = true;
-        }
-        
-        if (!right_motor_sent_ && right_motor_feedback_ > 0.01f) {
-            for (int y = 0; y < MOTOR_REGION_SIZE; ++y) {
-                for (int x = 0; x < MOTOR_REGION_SIZE; ++x) {
-                    uint32_t sensor_index = map_motor_region_to_sensor(true, x, y);
-                    activations.emplace_back(sensor_index, 0xF, right_motor_feedback_); // All modes active for feedback
-                }
-            }
-            right_motor_sent_ = true;
+            activations.emplace_back(SATIATION_SENSOR_TAG, mode_bitmap, satiation);
         }
     }
     
@@ -729,51 +747,37 @@ void CreatureExperiment::process_actuator_outputs() {
     float right_motor_suppressors = 0.0f;
     
     for (const auto& event : actuation_events) {
-        // Convert world position to grid coordinates (same mapping as grid experiment)
-        float norm_x = (event.position.x - (-1.0f)) / (1.0f - (-1.0f));  // Normalize to 0-1
-        float norm_y = (event.position.y - (-1.0f)) / (1.0f - (-1.0f));  // Normalize to 0-1
-        
-        int grid_x = static_cast<int>(norm_x * NEURAL_GRID_SIZE);
-        int grid_y = static_cast<int>(norm_y * NEURAL_GRID_SIZE);
-        
-        // Check if this falls in left motor region
-        if (grid_x >= LEFT_MOTOR_X && grid_x < LEFT_MOTOR_X + MOTOR_REGION_SIZE &&
-            grid_y >= LEFT_MOTOR_Y && grid_y < LEFT_MOTOR_Y + MOTOR_REGION_SIZE) {
-            
-            // Calculate relative position within the motor region
-            int rel_x = grid_x - LEFT_MOTOR_X;
-            int rel_y = grid_y - LEFT_MOTOR_Y;
-            
-            // Checkerboard pattern: if (x + y) is even, it's an activator; if odd, it's a suppressor
-            if ((rel_x + rel_y) % 2 == 0) {
+        // Use the actuator tag to determine motor action
+        switch (event.actuator_tag) {
+            case LEFT_MOTOR_ACTIVATOR_TAG:
                 left_motor_activators += 1.0f;
-                spdlog::debug("Left motor ACTIVATED by neuron at ({:.3f}, {:.3f}) -> grid ({}, {}) rel ({}, {})", 
-                             event.position.x, event.position.y, grid_x, grid_y, rel_x, rel_y);
-            } else {
+                spdlog::debug("Left motor ACTIVATED by actuator at ({:.3f}, {:.3f}, {:.3f})", 
+                             event.position.x, event.position.y, event.position.z);
+                break;
+                
+            case LEFT_MOTOR_SUPPRESSOR_TAG:
                 left_motor_suppressors += 1.0f;
-                spdlog::debug("Left motor SUPPRESSED by neuron at ({:.3f}, {:.3f}) -> grid ({}, {}) rel ({}, {})", 
-                             event.position.x, event.position.y, grid_x, grid_y, rel_x, rel_y);
-            }
-        }
-        
-        // Check if this falls in right motor region  
-        if (grid_x >= RIGHT_MOTOR_X && grid_x < RIGHT_MOTOR_X + MOTOR_REGION_SIZE &&
-            grid_y >= RIGHT_MOTOR_Y && grid_y < RIGHT_MOTOR_Y + MOTOR_REGION_SIZE) {
-            
-            // Calculate relative position within the motor region
-            int rel_x = grid_x - RIGHT_MOTOR_X;
-            int rel_y = grid_y - RIGHT_MOTOR_Y;
-            
-            // Checkerboard pattern: if (x + y) is even, it's an activator; if odd, it's a suppressor
-            if ((rel_x + rel_y) % 2 == 0) {
+                spdlog::debug("Left motor SUPPRESSED by actuator at ({:.3f}, {:.3f}, {:.3f})", 
+                             event.position.x, event.position.y, event.position.z);
+                break;
+                
+            case RIGHT_MOTOR_ACTIVATOR_TAG:
                 right_motor_activators += 1.0f;
-                spdlog::debug("Right motor ACTIVATED by neuron at ({:.3f}, {:.3f}) -> grid ({}, {}) rel ({}, {})", 
-                             event.position.x, event.position.y, grid_x, grid_y, rel_x, rel_y);
-            } else {
+                spdlog::debug("Right motor ACTIVATED by actuator at ({:.3f}, {:.3f}, {:.3f})", 
+                             event.position.x, event.position.y, event.position.z);
+                break;
+                
+            case RIGHT_MOTOR_SUPPRESSOR_TAG:
                 right_motor_suppressors += 1.0f;
-                spdlog::debug("Right motor SUPPRESSED by neuron at ({:.3f}, {:.3f}) -> grid ({}, {}) rel ({}, {})", 
-                             event.position.x, event.position.y, grid_x, grid_y, rel_x, rel_y);
-            }
+                spdlog::debug("Right motor SUPPRESSED by actuator at ({:.3f}, {:.3f}, {:.3f})", 
+                             event.position.x, event.position.y, event.position.z);
+                break;
+                
+            default:
+                // Unknown actuator tag, ignore
+                spdlog::debug("Unknown actuator tag {} at ({:.3f}, {:.3f}, {:.3f})", 
+                             event.actuator_tag, event.position.x, event.position.y, event.position.z);
+                break;
         }
     }
     
@@ -798,27 +802,6 @@ void CreatureExperiment::process_actuator_outputs() {
     }
 }
 
-uint32_t CreatureExperiment::map_vision_strip_to_sensor(int strip_index, int color_channel) const {
-    // Map vision strips to top rows of sensor grid
-    // 64 strips × 3 colors = 192 sensors across top 6 rows
-    int sensors_per_row = NEURAL_GRID_SIZE;
-    
-    int linear_index = strip_index * VISION_SENSORS_PER_STRIP + color_channel;
-    int row = linear_index / sensors_per_row;
-    int col = linear_index % sensors_per_row;
-    
-    return row * NEURAL_GRID_SIZE + col;
-}
-
-uint32_t CreatureExperiment::map_motor_region_to_sensor(bool is_right_motor, int x_offset, int y_offset) const {
-    int base_x = is_right_motor ? RIGHT_MOTOR_X : LEFT_MOTOR_X;
-    int base_y = is_right_motor ? RIGHT_MOTOR_Y : LEFT_MOTOR_Y;
-    
-    int grid_x = base_x + x_offset;
-    int grid_y = base_y + y_offset;
-    
-    return grid_y * NEURAL_GRID_SIZE + grid_x;
-}
 
 void CreatureExperiment::render_neural_overlay() {
     // Get sensor data from creature
@@ -904,6 +887,135 @@ void CreatureExperiment::render_visualization() {
     brain_viz_.render(neural_sim_);
 }
 
+void CreatureExperiment::decode_layout(const std::string& base64_encoding) {
+    // Decode base64 to bytes
+    std::vector<uint8_t> decoded_bytes;
+    
+    // Simple base64 decode table
+    const std::string base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::vector<int> decode_table(256, -1);
+    for (int i = 0; i < 64; i++) {
+        decode_table[base64_chars[i]] = i;
+    }
+    
+    // Decode base64 string to bytes
+    for (size_t i = 0; i < base64_encoding.length(); i += 4) {
+        uint32_t packed = 0;
+        int padding = 0;
+        
+        for (int j = 0; j < 4; j++) {
+            if (i + j < base64_encoding.length() && base64_encoding[i + j] != '=') {
+                packed = (packed << 6) | decode_table[base64_encoding[i + j]];
+            } else {
+                packed <<= 6;
+                padding++;
+            }
+        }
+        
+        for (int j = 2; j >= padding; j--) {
+            decoded_bytes.push_back((packed >> (j * 8)) & 0xFF);
+        }
+    }
+    
+    // Convert bytes to unsigned shorts (little endian)
+    std::vector<uint16_t> values;
+    for (size_t i = 0; i + 1 < decoded_bytes.size(); i += 2) {
+        uint16_t value = decoded_bytes[i] | (decoded_bytes[i + 1] << 8);
+        values.push_back(value);
+    }
+    
+    // Calculate expected number of values: 3 coordinates per position
+    size_t expected_positions = NUM_VISION_SENSORS + (NUM_MOTOR_ACTUATORS/2) * 4 + 2; // vision + 4 motor arrays + hunger + satiation
+    size_t expected_values = expected_positions * 3; // 3 dimensions per position
+    
+    if (values.size() < expected_values) {
+        spdlog::error("Insufficient layout data: got {} values, expected {}", values.size(), expected_values);
+        throw std::runtime_error("Invalid layout encoding");
+    }
+    
+    // Map unsigned shorts to brain space coordinates (-1.0 to 1.0)
+    auto map_to_brain_space = [](uint16_t value) -> float {
+        return (static_cast<float>(value) / 65535.0f) * 2.0f - 1.0f;
+    };
+    
+    // Decode all positions
+    size_t value_idx = 0;
+    
+    // Vision sensors (192 positions)
+    for (size_t i = 0; i < NUM_VISION_SENSORS; i++) {
+        layout_.vision_sensors[i] = Vec3(
+            map_to_brain_space(values[value_idx++]),
+            map_to_brain_space(values[value_idx++]),
+            map_to_brain_space(values[value_idx++])
+        );
+    }
+    
+    // Left motor activators (8 positions)
+    for (size_t i = 0; i < NUM_MOTOR_ACTUATORS/2; i++) {
+        layout_.left_motor_activators[i] = Vec3(
+            map_to_brain_space(values[value_idx++]),
+            map_to_brain_space(values[value_idx++]),
+            map_to_brain_space(values[value_idx++])
+        );
+    }
+    
+    // Left motor suppressors (8 positions)
+    for (size_t i = 0; i < NUM_MOTOR_ACTUATORS/2; i++) {
+        layout_.left_motor_suppressors[i] = Vec3(
+            map_to_brain_space(values[value_idx++]),
+            map_to_brain_space(values[value_idx++]),
+            map_to_brain_space(values[value_idx++])
+        );
+    }
+    
+    // Right motor activators (8 positions)
+    for (size_t i = 0; i < NUM_MOTOR_ACTUATORS/2; i++) {
+        layout_.right_motor_activators[i] = Vec3(
+            map_to_brain_space(values[value_idx++]),
+            map_to_brain_space(values[value_idx++]),
+            map_to_brain_space(values[value_idx++])
+        );
+    }
+    
+    // Right motor suppressors (8 positions)
+    for (size_t i = 0; i < NUM_MOTOR_ACTUATORS/2; i++) {
+        layout_.right_motor_suppressors[i] = Vec3(
+            map_to_brain_space(values[value_idx++]),
+            map_to_brain_space(values[value_idx++]),
+            map_to_brain_space(values[value_idx++])
+        );
+    }
+    
+    // Hunger sensor (1 position)
+    layout_.hunger_sensor = Vec3(
+        map_to_brain_space(values[value_idx++]),
+        map_to_brain_space(values[value_idx++]),
+        map_to_brain_space(values[value_idx++])
+    );
+    
+    // Satiation sensor (1 position)
+    layout_.satiation_sensor = Vec3(
+        map_to_brain_space(values[value_idx++]),
+        map_to_brain_space(values[value_idx++]),
+        map_to_brain_space(values[value_idx++])
+    );
+    
+    spdlog::info("Successfully decoded layout from base64 encoding ({} values -> {} positions)",
+                 values.size(), expected_positions);
+}
+
+std::string CreatureExperiment::get_layout_filename_suffix() const {
+    // Use first 8 characters of base64 encoding as suffix
+    std::string suffix = layout_encoding_.substr(0, 8);
+    // Replace any non-alphanumeric characters with underscores
+    for (char& c : suffix) {
+        if (!std::isalnum(c)) {
+            c = '_';
+        }
+    }
+    return suffix;
+}
+
 void CreatureExperiment::cleanup() {
     brain_viz_.cleanup();
     if (renderer_) {
@@ -921,8 +1033,72 @@ void CreatureExperiment::cleanup() {
 
 } // namespace neuron_creature_experiment
 
+std::string generate_random_layout_encoding() {
+    using namespace neuron_creature_experiment;
+    // Calculate total number of unsigned shorts needed
+    constexpr int total_positions = NUM_VISION_SENSORS + 8 * 4 + 2; // vision + 4 motor types (8 each) + hunger + satiation
+    constexpr int values_per_position = 3; // x, y, z
+    constexpr int total_values = total_positions * values_per_position;
+    
+    // Generate random unsigned short values
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<uint16_t> dis(0, 65535);
+    
+    std::vector<uint16_t> values;
+    values.reserve(total_values);
+    for (int i = 0; i < total_values; ++i) {
+        values.push_back(dis(gen));
+    }
+    
+    // Convert to base64
+    const uint8_t* bytes = reinterpret_cast<const uint8_t*>(values.data());
+    size_t byte_count = values.size() * sizeof(uint16_t);
+    
+    std::string base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string result;
+    
+    for (size_t i = 0; i < byte_count; i += 3) {
+        uint32_t group = 0;
+        int group_size = 0;
+        
+        for (int j = 0; j < 3 && (i + j) < byte_count; ++j) {
+            group = (group << 8) | bytes[i + j];
+            group_size++;
+        }
+        
+        // Pad to 24 bits
+        group <<= (3 - group_size) * 8;
+        
+        // Extract 6-bit chunks
+        for (int j = 3; j >= 0; --j) {
+            if (j < 4 - ((3 - group_size) * 4 / 3)) {
+                result += base64_chars[(group >> (j * 6)) & 0x3F];
+            } else {
+                result += '=';
+            }
+        }
+    }
+    
+    return result;
+}
+
 int main(int argc, char* argv[]) {
-    neuron_creature_experiment::CreatureExperiment app;
+    std::string layout_encoding;
+    
+    if (argc == 1) {
+        // Generate random layout if no argument provided
+        layout_encoding = generate_random_layout_encoding();
+        std::cout << "Using random layout: " << layout_encoding << std::endl;
+    } else if (argc == 2) {
+        layout_encoding = argv[1];
+    } else {
+        std::cerr << "Usage: " << argv[0] << " [base64_layout_encoding]" << std::endl;
+        std::cerr << "If no encoding is provided, a random layout will be generated." << std::endl;
+        return 1;
+    }
+    
+    neuron_creature_experiment::CreatureExperiment app(layout_encoding);
     app.run();
     return 0;
 }

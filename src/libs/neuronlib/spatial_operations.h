@@ -68,6 +68,39 @@ BrainPtr populate_neuron_grid(
     float actuator_z_threshold = 0.1f,
     uint32_t random_seed = 12345);
 
+struct SensorPosition {
+    Vec3 position;
+    uint16_t sensor_tag;
+    
+    SensorPosition() : position{0, 0, 0}, sensor_tag(0) {}
+    SensorPosition(const Vec3& pos, uint16_t tag) : position(pos), sensor_tag(tag) {}
+};
+
+struct ActuatorPosition {
+    Vec3 position;
+    uint8_t tag;  // e.g., 0=left_motor_activator, 1=left_motor_suppressor, 2=right_motor_activator, 3=right_motor_suppressor
+    
+    ActuatorPosition() : position{0, 0, 0}, tag(0) {}
+    ActuatorPosition(const Vec3& pos, uint8_t t) : position(pos), tag(t) {}
+};
+
+// Helper functions for brain initialization
+void initialize_brain_weights(Brain& brain, uint32_t random_seed);
+void populate_neurons_and_dendrites(Brain& brain, const FlowField3D& flow_field,
+                                   float dendrite_cone_angle, float dendrite_min_distance,
+                                   float dendrite_max_distance, uint32_t random_seed);
+
+BrainPtr populate_neuron_grid_with_layout(
+    const FlowField3D& flow_field,
+    const std::vector<SensorPosition>& sensor_positions,
+    const std::vector<ActuatorPosition>& actuator_positions,
+    float neuron_threshold = 1.0f,
+    float dendrite_cone_angle = 45.0f,
+    float dendrite_min_distance = 0.1f,
+    float dendrite_max_distance = 0.5f,
+    float sensor_connection_radius = 0.3f,
+    uint32_t random_seed = 12345);
+
 } // namespace neuronlib
 
 #endif // NEURONLIB_SPATIAL_OPERATIONS_H
