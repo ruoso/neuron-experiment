@@ -147,7 +147,7 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
                 }
                 
                 if (neuron_fired) {
-                    //spdlog::debug("Neuron {} firing with total input {}", neuron_index, total_input);
+                    //SPDLOG_DEBUG("Neuron {} firing with total input {}", neuron_index, total_input);
                     
                     // Add to firing events batch for later callback
                     firing_events_batch_.emplace_back(brain.neurons[neuron_index].position, total_input, current_timestamp);
@@ -197,7 +197,7 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
                                 }
                                 
                                 if (closest_dendrite != 0) {
-                                    //spdlog::debug("Neuron {} forming new connection to dendrite {}", 
+                                    //SPDLOG_DEBUG("Neuron {} forming new connection to dendrite {}", 
                                     //          neuron_index, closest_dendrite);
                                     brain.neurons[neuron_index].output_targets[i] = closest_dendrite;
                                     // Set the weight for this new connection to a normal distribution

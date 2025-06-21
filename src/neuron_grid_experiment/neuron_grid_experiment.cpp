@@ -60,21 +60,21 @@ void NeuronGridExperiment::initialize_logging() {
         // Set as default logger
         spdlog::set_default_logger(logger);
         
-        spdlog::info("Logging system initialized");
-        spdlog::debug("Debug logging enabled to file: neuron_experiment.log");
+        SPDLOG_INFO("Logging system initialized");
+        SPDLOG_DEBUG("Debug logging enabled to file: neuron_experiment.log");
     } catch (const spdlog::spdlog_ex& ex) {
         std::cerr << "Log initialization failed: " << ex.what() << std::endl;
     }
 }
 
 bool NeuronGridExperiment::initialize() {
-    spdlog::info("Initializing Neuron Experiment Application...");
+    SPDLOG_INFO("Initializing Neuron Experiment Application...");
     
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
         spdlog::error("SDL initialization failed: {}", SDL_GetError());
         return false;
     }
-    spdlog::debug("SDL initialized successfully");
+    SPDLOG_DEBUG("SDL initialized successfully");
     
     window_ = SDL_CreateWindow("Neuron Experiment - 2D Grid",
                              SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
@@ -85,14 +85,14 @@ bool NeuronGridExperiment::initialize() {
         spdlog::error("Main window creation failed: {}", SDL_GetError());
         return false;
     }
-    spdlog::debug("Main window created: {}x{}", WINDOW_WIDTH, WINDOW_HEIGHT);
+    SPDLOG_DEBUG("Main window created: {}x{}", WINDOW_WIDTH, WINDOW_HEIGHT);
     
     renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_ACCELERATED);
     if (!renderer_) {
         spdlog::error("Main renderer creation failed: {}", SDL_GetError());
         return false;
     }
-    spdlog::debug("Main renderer created successfully");
+    SPDLOG_DEBUG("Main renderer created successfully");
     
     // Initialize brain visualization
     if (!brain_viz_.initialize()) {
@@ -100,7 +100,7 @@ bool NeuronGridExperiment::initialize() {
         return false;
     }
     
-    spdlog::info("Application initialization complete");
+    SPDLOG_INFO("Application initialization complete");
     return true;
 }
 
@@ -215,7 +215,7 @@ void NeuronGridExperiment::handle_mouse_click(int x, int y) {
         // Create ripple effect
         //active_ripples_.emplace_back(grid_x, grid_y, CellSource::USER, neural_sim_.get_current_timestamp());
         
-        spdlog::debug("User activated cell ({}, {}) at screen pos ({}, {})", grid_x, grid_y, x, y);
+        SPDLOG_DEBUG("User activated cell ({}, {}) at screen pos ({}, {})", grid_x, grid_y, x, y);
     }
 }
 
@@ -228,7 +228,7 @@ void NeuronGridExperiment::update() {
         // Update charts synchronized with simulation timestamps
         brain_viz_.update_charts();
         
-        spdlog::debug("Simulation step completed, timestamp: {}", neural_sim_.get_current_timestamp());
+        SPDLOG_DEBUG("Simulation step completed, timestamp: {}", neural_sim_.get_current_timestamp());
     } else {
         // sleep briefly to avoid busy-waiting
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -309,11 +309,11 @@ void NeuronGridExperiment::generate_sensor_activations() {
     brain_viz_.track_sensor_activations(static_cast<int>(activations.size()));
     
     if (!targeted_activations.empty()) {
-        spdlog::debug("Generated {} sensor activations -> {} targeted activations", 
+        SPDLOG_DEBUG("Generated {} sensor activations -> {} targeted activations", 
                      activations.size(), targeted_activations.size());
         neural_sim_.send_sensor_activations(targeted_activations);
     } else if (!activations.empty()) {
-        spdlog::debug("Generated {} sensor activations but no targeted activations", activations.size());
+        SPDLOG_DEBUG("Generated {} sensor activations but no targeted activations", activations.size());
     }
 }
     
@@ -322,11 +322,11 @@ void NeuronGridExperiment::process_actuator_outputs() {
     auto actuation_events = neural_sim_.get_actuator_events();
     
     if (!actuation_events.empty()) {
-        spdlog::info("Processing {} actuator outputs", actuation_events.size());
+        SPDLOG_INFO("Processing {} actuator outputs", actuation_events.size());
     }
     
     for (const auto& event : actuation_events) {
-        spdlog::info("Actuator fired: neuron_pos=({:.3f}, {:.3f}, {:.3f}) timestamp={}", 
+        SPDLOG_INFO("Actuator fired: neuron_pos=({:.3f}, {:.3f}, {:.3f}) timestamp={}", 
                     event.position.x, event.position.y, event.position.z, event.timestamp);
         
         // Convert world position to grid coordinates
@@ -341,7 +341,7 @@ void NeuronGridExperiment::process_actuator_outputs() {
         int clamped_grid_x = std::max(0, std::min(GRID_SIZE - 1, grid_x));
         int clamped_grid_y = std::max(0, std::min(GRID_SIZE - 1, grid_y));
         
-        spdlog::info("Actuator mapping: world=({:.3f}, {:.3f}) -> norm=({:.3f}, {:.3f}) -> grid=({}, {}) -> clamped=({}, {})", 
+        SPDLOG_INFO("Actuator mapping: world=({:.3f}, {:.3f}) -> norm=({:.3f}, {:.3f}) -> grid=({}, {}) -> clamped=({}, {})", 
                     event.position.x, event.position.y, norm_x, norm_y, 
                     grid_x, grid_y, clamped_grid_x, clamped_grid_y);
         

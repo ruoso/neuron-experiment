@@ -100,7 +100,7 @@ bool World::consume_if_in_range() {
             creature_state_.hunger = std::max(0.0f, creature_state_.hunger - fruit.satiation_value);
             creature_state_.energy = std::min(1.0f, creature_state_.energy + fruit.satiation_value * 0.1f);
             fruit.available = false;
-            spdlog::info("Fruit consumed! Position: ({:.2f}, {:.2f}), Satiation: {:.2f}", 
+            SPDLOG_INFO("Fruit consumed! Position: ({:.2f}, {:.2f}), Satiation: {:.2f}", 
                         fruit.position.x, fruit.position.y, fruit.satiation_value);
             return true;
         }
@@ -125,7 +125,7 @@ std::vector<VisionSample> World::get_visible_objects(const Vec2& position, float
     static uint32_t vision_call_count = 0;
     vision_call_count++;
     if (vision_call_count % 60 == 0) { // Log every 60 calls (once per second at 60fps)
-        spdlog::debug("Vision system called {} times. Position: ({:.2f}, {:.2f}), Angle: {:.2f}, FOV: {:.2f}, Trees: {}, Fruits: {}", 
+        SPDLOG_DEBUG("Vision system called {} times. Position: ({:.2f}, {:.2f}), Angle: {:.2f}, FOV: {:.2f}, Trees: {}, Fruits: {}", 
                      vision_call_count, position.x, position.y, angle, fov, trees_.size(), fruits_.size());
         
         // Log some nearby objects for debugging
@@ -134,7 +134,7 @@ std::vector<VisionSample> World::get_visible_objects(const Vec2& position, float
             if (!fruit.available) continue;
             float distance = wrap_distance(position, fruit.position);
             if (distance < 20.0f && logged_fruits < 3) {
-                spdlog::debug("  Nearby fruit: pos=({:.2f}, {:.2f}), dist={:.2f}, maturity={:.2f}", 
+                SPDLOG_DEBUG("  Nearby fruit: pos=({:.2f}, {:.2f}), dist={:.2f}, maturity={:.2f}", 
                              fruit.position.x, fruit.position.y, distance, fruit.maturity);
                 logged_fruits++;
             }
@@ -144,7 +144,7 @@ std::vector<VisionSample> World::get_visible_objects(const Vec2& position, float
         for (const auto& tree : trees_) {
             float distance = wrap_distance(position, tree.position);
             if (distance < 20.0f && logged_trees < 3) {
-                spdlog::debug("  Nearby tree: pos=({:.2f}, {:.2f}), dist={:.2f}, state={}", 
+                SPDLOG_DEBUG("  Nearby tree: pos=({:.2f}, {:.2f}), dist={:.2f}, state={}", 
                              tree.position.x, tree.position.y, distance, static_cast<int>(tree.state.lifecycle_state));
                 logged_trees++;
             }
@@ -253,7 +253,7 @@ void World::update_trees(uint32_t tick) {
     size_t trees_after = trees_.size();
     
     if (trees_before != trees_after) {
-        spdlog::info("Removed {} old trees. Total trees: {} -> {}", 
+        SPDLOG_INFO("Removed {} old trees. Total trees: {} -> {}", 
                     trees_before - trees_after, trees_before, trees_after);
     }
     
@@ -263,7 +263,7 @@ void World::update_trees(uint32_t tick) {
         float x = uniform_dist_(rng_) * config_.width;
         float y = uniform_dist_(rng_) * config_.height;
         add_tree(Vec2(x, y));
-        spdlog::info("Spawned new tree at ({:.2f}, {:.2f}). Total trees: {}", x, y, trees_.size());
+        SPDLOG_INFO("Spawned new tree at ({:.2f}, {:.2f}). Total trees: {}", x, y, trees_.size());
     }
 }
 
@@ -289,7 +289,7 @@ void World::update_fruits(uint32_t tick) {
     size_t fruits_after = fruits_.size();
     
     if (fruits_before != fruits_after) {
-        spdlog::info("Removed {} fruits (consumed/overripe). Total fruits: {} -> {}", 
+        SPDLOG_INFO("Removed {} fruits (consumed/overripe). Total fruits: {} -> {}", 
                     fruits_before - fruits_after, fruits_before, fruits_after);
     }
 }

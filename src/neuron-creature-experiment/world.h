@@ -99,9 +99,9 @@ private:
             float base_intensity = get_intensity(obj, distance);
             
             if (should_debug && visible_objects.size() < 3) {
-                spdlog::debug("    Object at ({:.2f}, {:.2f}): center_angle={:.2f}, start_angle={:.2f}, end_angle={:.2f}, intensity={:.2f}",
+                SPDLOG_DEBUG("    Object at ({:.2f}, {:.2f}): center_angle={:.2f}, start_angle={:.2f}, end_angle={:.2f}, intensity={:.2f}",
                              obj.position.x, obj.position.y, obj_center_angle, obj_start_angle, obj_end_angle, base_intensity);
-                spdlog::debug("    Vision range: {:.2f} to {:.2f}, strip_angle={:.2f}",
+                SPDLOG_DEBUG("    Vision range: {:.2f} to {:.2f}, strip_angle={:.2f}",
                              start_angle, start_angle + NUM_VISION_STRIPS * strip_angle, strip_angle);
             }
             

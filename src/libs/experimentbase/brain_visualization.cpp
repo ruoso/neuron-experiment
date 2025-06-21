@@ -17,7 +17,7 @@ BrainVisualization::~BrainVisualization() {
 }
 
 bool BrainVisualization::initialize() {
-    spdlog::info("Initializing brain visualization...");
+    SPDLOG_INFO("Initializing brain visualization...");
     
     // Create visualization window
     viz_window_ = SDL_CreateWindow("Neuron Experiment - 3D Visualization",
@@ -29,7 +29,7 @@ bool BrainVisualization::initialize() {
         spdlog::error("Visualization window creation failed: {}", SDL_GetError());
         return false;
     }
-    spdlog::debug("Visualization window created: {}x{}", VIZ_WINDOW_WIDTH, VIZ_WINDOW_HEIGHT);
+    SPDLOG_DEBUG("Visualization window created: {}x{}", VIZ_WINDOW_WIDTH, VIZ_WINDOW_HEIGHT);
     
     viz_renderer_ = SDL_CreateRenderer(viz_window_, -1, SDL_RENDERER_ACCELERATED);
     if (!viz_renderer_) {
@@ -40,8 +40,8 @@ bool BrainVisualization::initialize() {
     // Enable alpha blending for visualization renderer
     SDL_SetRenderDrawBlendMode(viz_renderer_, SDL_BLENDMODE_BLEND);
     
-    spdlog::debug("Visualization renderer created successfully");
-    spdlog::info("Brain visualization initialization complete");
+    SPDLOG_DEBUG("Visualization renderer created successfully");
+    SPDLOG_INFO("Brain visualization initialization complete");
     return true;
 }
 

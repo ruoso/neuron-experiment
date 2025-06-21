@@ -36,12 +36,12 @@ void Creature::update(uint32_t tick, World& world) {
     if (world.consume_if_in_range()) {
         last_satiation_spike_ = 1.0f;
         fruits_eaten_++;
-        spdlog::info("Creature automatically consumed fruit (total: {})", fruits_eaten_);
+        SPDLOG_INFO("Creature automatically consumed fruit (total: {})", fruits_eaten_);
     }
     
     // Debug: Log creature state periodically
     if (tick % 60 == 0) {
-        spdlog::debug("Creature tick {}: pos=({:.2f}, {:.2f}), orient={:.2f}, motors=({:.2f}, {:.2f})",
+        SPDLOG_DEBUG("Creature tick {}: pos=({:.2f}, {:.2f}), orient={:.2f}, motors=({:.2f}, {:.2f})",
                      tick, state_.position.x, state_.position.y, state_.orientation,
                      motor_output_.left_force, motor_output_.right_force);
     }

@@ -95,20 +95,20 @@ void CreatureExperiment::initialize_logging() {
         
         spdlog::set_default_logger(logger);
         
-        spdlog::info("Creature experiment logging system initialized");
+        SPDLOG_INFO("Creature experiment logging system initialized");
     } catch (const spdlog::spdlog_ex& ex) {
         std::cerr << "Log initialization failed: " << ex.what() << std::endl;
     }
 }
 
 bool CreatureExperiment::initialize() {
-    spdlog::info("Initializing Creature Experiment Application...");
+    SPDLOG_INFO("Initializing Creature Experiment Application...");
     
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
         spdlog::error("SDL initialization failed: {}", SDL_GetError());
         return false;
     }
-    spdlog::debug("SDL initialized successfully");
+    SPDLOG_DEBUG("SDL initialized successfully");
     
     window_ = SDL_CreateWindow("Neuron Creature Experiment - 2D World",
                              SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
@@ -119,14 +119,14 @@ bool CreatureExperiment::initialize() {
         spdlog::error("Main window creation failed: {}", SDL_GetError());
         return false;
     }
-    spdlog::debug("Main window created: {}x{}", WINDOW_WIDTH, WINDOW_HEIGHT);
+    SPDLOG_DEBUG("Main window created: {}x{}", WINDOW_WIDTH, WINDOW_HEIGHT);
     
     renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_ACCELERATED);
     if (!renderer_) {
         spdlog::error("Main renderer creation failed: {}", SDL_GetError());
         return false;
     }
-    spdlog::debug("Main renderer created successfully");
+    SPDLOG_DEBUG("Main renderer created successfully");
     
     // Initialize brain visualization
     if (!brain_viz_.initialize()) {
@@ -136,7 +136,7 @@ bool CreatureExperiment::initialize() {
     
     initialize_world();
     
-    spdlog::info("Application initialization complete");
+    SPDLOG_INFO("Application initialization complete");
     return true;
 }
 
@@ -186,7 +186,7 @@ void CreatureExperiment::initialize_world() {
     
     // Fruits will be spawned naturally by trees during their fruiting phase
     
-    spdlog::info("World initialized with {} trees and {} fruits", 
+    SPDLOG_INFO("World initialized with {} trees and {} fruits", 
                 world_->get_trees().size(), world_->get_fruits().size());
 }
 
@@ -237,7 +237,7 @@ void CreatureExperiment::handle_keypress(SDL_Keycode key, bool pressed) {
         case SDLK_SPACE:
             if (pressed) {
                 paused_ = !paused_;
-                spdlog::info("Simulation {}", paused_ ? "paused" : "resumed");
+                SPDLOG_INFO("Simulation {}", paused_ ? "paused" : "resumed");
             }
             break;
         
@@ -304,7 +304,7 @@ void CreatureExperiment::update() {
                 summary_file << total_distance_moved_ << std::endl;
                 summary_file << creature_->get_fruits_eaten() << std::endl;
                 summary_file.close();
-                spdlog::info("Creature died from hunger after {} ticks. Moved {:.2f} units, ate {} fruits. Summary written to {}", 
+                SPDLOG_INFO("Creature died from hunger after {} ticks. Moved {:.2f} units, ate {} fruits. Summary written to {}", 
                            ticks_survived_, total_distance_moved_, creature_->get_fruits_eaten(), filename);
             }
             running_ = false;
@@ -345,7 +345,7 @@ void CreatureExperiment::update() {
         if (right_motor_suppressors_ < 0.01f) right_motor_suppressors_ = 0.0f;
         
         if (simulation_tick_ % 60 == 0) {
-            spdlog::debug("Simulation tick: {}, Creature pos: ({:.2f}, {:.2f})", 
+            SPDLOG_DEBUG("Simulation tick: {}, Creature pos: ({:.2f}, {:.2f})", 
                          simulation_tick_, 
                          creature_->get_position().x, 
                          creature_->get_position().y);
@@ -547,7 +547,7 @@ void CreatureExperiment::render_sensor_strips() {
         for (const auto& sample : sensor_data.vision_samples) {
             if (sample.total_intensity > 0.0f) active_samples++;
         }
-        spdlog::debug("Render frame {}: {} active vision samples out of {}", 
+        SPDLOG_DEBUG("Render frame {}: {} active vision samples out of {}", 
                      render_count, active_samples, sensor_data.vision_samples.size());
     }
     
@@ -727,7 +727,7 @@ void CreatureExperiment::generate_sensor_activations() {
     brain_viz_.track_sensor_activations(static_cast<int>(activations.size()));
     
     if (!targeted_activations.empty()) {
-        spdlog::debug("Generated {} sensor activations -> {} targeted activations", 
+        SPDLOG_DEBUG("Generated {} sensor activations -> {} targeted activations", 
                      activations.size(), targeted_activations.size());
         neural_sim_.send_sensor_activations(targeted_activations);
     }
@@ -738,7 +738,7 @@ void CreatureExperiment::process_actuator_outputs() {
     auto actuation_events = neural_sim_.get_actuator_events();
     
     if (!actuation_events.empty()) {
-        spdlog::debug("Processing {} actuator outputs", actuation_events.size());
+        SPDLOG_DEBUG("Processing {} actuator outputs", actuation_events.size());
     }
     
     float left_motor_activators = 0.0f;
@@ -751,31 +751,31 @@ void CreatureExperiment::process_actuator_outputs() {
         switch (event.actuator_tag) {
             case LEFT_MOTOR_ACTIVATOR_TAG:
                 left_motor_activators += 1.0f;
-                spdlog::debug("Left motor ACTIVATED by actuator at ({:.3f}, {:.3f}, {:.3f})", 
+                SPDLOG_DEBUG("Left motor ACTIVATED by actuator at ({:.3f}, {:.3f}, {:.3f})", 
                              event.position.x, event.position.y, event.position.z);
                 break;
                 
             case LEFT_MOTOR_SUPPRESSOR_TAG:
                 left_motor_suppressors += 1.0f;
-                spdlog::debug("Left motor SUPPRESSED by actuator at ({:.3f}, {:.3f}, {:.3f})", 
+                SPDLOG_DEBUG("Left motor SUPPRESSED by actuator at ({:.3f}, {:.3f}, {:.3f})", 
                              event.position.x, event.position.y, event.position.z);
                 break;
                 
             case RIGHT_MOTOR_ACTIVATOR_TAG:
                 right_motor_activators += 1.0f;
-                spdlog::debug("Right motor ACTIVATED by actuator at ({:.3f}, {:.3f}, {:.3f})", 
+                SPDLOG_DEBUG("Right motor ACTIVATED by actuator at ({:.3f}, {:.3f}, {:.3f})", 
                              event.position.x, event.position.y, event.position.z);
                 break;
                 
             case RIGHT_MOTOR_SUPPRESSOR_TAG:
                 right_motor_suppressors += 1.0f;
-                spdlog::debug("Right motor SUPPRESSED by actuator at ({:.3f}, {:.3f}, {:.3f})", 
+                SPDLOG_DEBUG("Right motor SUPPRESSED by actuator at ({:.3f}, {:.3f}, {:.3f})", 
                              event.position.x, event.position.y, event.position.z);
                 break;
                 
             default:
                 // Unknown actuator tag, ignore
-                spdlog::debug("Unknown actuator tag {} at ({:.3f}, {:.3f}, {:.3f})", 
+                SPDLOG_DEBUG("Unknown actuator tag {} at ({:.3f}, {:.3f}, {:.3f})", 
                              event.actuator_tag, event.position.x, event.position.y, event.position.z);
                 break;
         }
@@ -796,7 +796,7 @@ void CreatureExperiment::process_actuator_outputs() {
     right_motor_suppressors_ = right_motor_suppressors;
     
     if (left_motor_activators > 0 || left_motor_suppressors > 0 || right_motor_activators > 0 || right_motor_suppressors > 0) {
-        spdlog::debug("Motor summary: Left({:.1f}a - {:.1f}s = {:.2f}), Right({:.1f}a - {:.1f}s = {:.2f})",
+        SPDLOG_DEBUG("Motor summary: Left({:.1f}a - {:.1f}s = {:.2f}), Right({:.1f}a - {:.1f}s = {:.2f})",
                      left_motor_activators, left_motor_suppressors, left_net_activation,
                      right_motor_activators, right_motor_suppressors, right_net_activation);
     }
@@ -1000,7 +1000,7 @@ void CreatureExperiment::decode_layout(const std::string& base64_encoding) {
         map_to_brain_space(values[value_idx++])
     );
     
-    spdlog::info("Successfully decoded layout from base64 encoding ({} values -> {} positions)",
+    SPDLOG_INFO("Successfully decoded layout from base64 encoding ({} values -> {} positions)",
                  values.size(), expected_positions);
 }
 

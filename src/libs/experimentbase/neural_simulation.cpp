@@ -21,7 +21,7 @@ NeuralSimulation::~NeuralSimulation() {
 }
 
 void NeuralSimulation::initialize() {
-    spdlog::info("Initializing neural simulation...");
+    SPDLOG_INFO("Initializing neural simulation...");
     
     initialize_brain();
     
@@ -38,12 +38,12 @@ void NeuralSimulation::initialize() {
         }
     });
     
-    spdlog::info("Neural simulation initialized successfully");
+    SPDLOG_INFO("Neural simulation initialized successfully");
 }
 
 void NeuralSimulation::initialize(const std::vector<SensorPosition>& sensor_positions, 
                                  const std::vector<ActuatorPosition>& actuator_positions) {
-    spdlog::info("Initializing neural simulation with custom layout...");
+    SPDLOG_INFO("Initializing neural simulation with custom layout...");
     
     initialize_brain_with_layout(sensor_positions, actuator_positions);
     
@@ -60,7 +60,7 @@ void NeuralSimulation::initialize(const std::vector<SensorPosition>& sensor_posi
         }
     });
     
-    spdlog::info("Neural simulation with custom layout initialized successfully");
+    SPDLOG_INFO("Neural simulation with custom layout initialized successfully");
 }
 
 void NeuralSimulation::start() {
@@ -77,11 +77,11 @@ void NeuralSimulation::stop() {
 }
 
 void NeuralSimulation::initialize_brain() {
-    spdlog::info("Initializing neural network...");
+    SPDLOG_INFO("Initializing neural network...");
     
     // Create a simple 3D flow field with more internal processing space
     FlowField3D flow_field(-1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f, 0.3f, 0.2f, 0.1f);
-    spdlog::debug("Flow field created: bounds=({}, {}, {}) to ({}, {}, {})", 
+    SPDLOG_DEBUG("Flow field created: bounds=({}, {}, {}) to ({}, {}, {})", 
                  flow_field.min_x, flow_field.min_y, flow_field.min_z,
                  flow_field.max_x, flow_field.max_y, flow_field.max_z);
     
@@ -89,20 +89,20 @@ void NeuralSimulation::initialize_brain() {
     brain_ = populate_neuron_grid(flow_field, 1.0f, 45.0f, 0.1f, 0.5f,
                                  GRID_SIZE, GRID_SIZE, 0.3f, 0.3f, 12345);
     
-    spdlog::info("Brain initialized successfully:");
-    spdlog::info("  - Addressing: {} neuron bits, {} dendrite bits = {} max neurons", 
+    SPDLOG_INFO("Brain initialized successfully:");
+    SPDLOG_INFO("  - Addressing: {} neuron bits, {} dendrite bits = {} max neurons", 
                  NEURON_ADDRESS_BITS, DENDRITE_ADDRESS_BITS, MAX_NEURONS);
-    spdlog::info("  - Sensor grid: {}x{} = {} sensors", GRID_SIZE, GRID_SIZE, GRID_SIZE * GRID_SIZE);
-    spdlog::info("  - Neural network ready for processing");
+    SPDLOG_INFO("  - Sensor grid: {}x{} = {} sensors", GRID_SIZE, GRID_SIZE, GRID_SIZE * GRID_SIZE);
+    SPDLOG_INFO("  - Neural network ready for processing");
 }
 
 void NeuralSimulation::initialize_brain_with_layout(const std::vector<SensorPosition>& sensor_positions, 
                                                    const std::vector<ActuatorPosition>& actuator_positions) {
-    spdlog::info("Initializing neural network with custom layout...");
+    SPDLOG_INFO("Initializing neural network with custom layout...");
     
     // Create a simple 3D flow field with more internal processing space
     FlowField3D flow_field(-1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f, 0.3f, 0.2f, 0.1f);
-    spdlog::debug("Flow field created: bounds=({}, {}, {}) to ({}, {}, {})", 
+    SPDLOG_DEBUG("Flow field created: bounds=({}, {}, {}) to ({}, {}, {})", 
                  flow_field.min_x, flow_field.min_y, flow_field.min_z,
                  flow_field.max_x, flow_field.max_y, flow_field.max_z);
     
@@ -110,12 +110,12 @@ void NeuralSimulation::initialize_brain_with_layout(const std::vector<SensorPosi
     brain_ = populate_neuron_grid_with_layout(flow_field, sensor_positions, actuator_positions,
                                              1.0f, 45.0f, 0.1f, 0.5f, 0.3f, 12345);
     
-    spdlog::info("Brain with custom layout initialized successfully:");
-    spdlog::info("  - Addressing: {} neuron bits, {} dendrite bits = {} max neurons", 
+    SPDLOG_INFO("Brain with custom layout initialized successfully:");
+    SPDLOG_INFO("  - Addressing: {} neuron bits, {} dendrite bits = {} max neurons", 
                  NEURON_ADDRESS_BITS, DENDRITE_ADDRESS_BITS, MAX_NEURONS);
-    spdlog::info("  - Sensor positions: {} sensors", sensor_positions.size());
-    spdlog::info("  - Actuator positions: {} actuators", actuator_positions.size());
-    spdlog::info("  - Neural network ready for processing");
+    SPDLOG_INFO("  - Sensor positions: {} sensors", sensor_positions.size());
+    SPDLOG_INFO("  - Actuator positions: {} actuators", actuator_positions.size());
+    SPDLOG_INFO("  - Neural network ready for processing");
 }
 
 bool NeuralSimulation::is_ready_to_advance() {
@@ -139,7 +139,7 @@ void NeuralSimulation::advance_timestamp() {
     simulation_timestamp_.fetch_add(1);
     
     // Log performance for this timestamp
-    spdlog::info("Performance: {:.3f} seconds/timestamp (timestamp {})", 
+    SPDLOG_INFO("Performance: {:.3f} seconds/timestamp (timestamp {})", 
                 seconds_per_timestamp, simulation_timestamp_.load());
     
     last_timestamp_time_ = current_time;
@@ -151,7 +151,7 @@ uint32_t NeuralSimulation::get_current_timestamp() const {
 
 void NeuralSimulation::send_sensor_activations(const std::vector<TargetedActivation>& activations) {
     if (!activations.empty()) {
-        spdlog::debug("Sending {} sensor activations to neural network", activations.size());
+        SPDLOG_DEBUG("Sending {} sensor activations to neural network", activations.size());
         message_processor_.send_activations_to_shards(activations);
     }
 }
@@ -176,7 +176,7 @@ const Brain& NeuralSimulation::get_brain() const {
 }
 
 void NeuralSimulation::initialize_shard_threads() {
-    spdlog::info("Initializing shard processing threads...");
+    SPDLOG_INFO("Initializing shard processing threads...");
     
     threads_running_.store(true);
     
@@ -221,7 +221,7 @@ void NeuralSimulation::initialize_shard_threads() {
                 
                 int result = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
                 if (result == 0) {
-                    spdlog::debug("Shard {} thread bound to CPU core {} (avoiding main core {})", 
+                    SPDLOG_DEBUG("Shard {} thread bound to CPU core {} (avoiding main core {})", 
                                  shard_idx, target_core, main_core);
                 } else {
                     spdlog::warn("Failed to set CPU affinity for shard {} thread: {}", shard_idx, strerror(result));
@@ -232,7 +232,7 @@ void NeuralSimulation::initialize_shard_threads() {
         });
     }
     
-    spdlog::info("Started {} shard processing threads (avoiding main thread core {})", 
+    SPDLOG_INFO("Started {} shard processing threads (avoiding main thread core {})", 
                  NUM_ACTIVATION_SHARDS, main_core);
 }
 
@@ -241,7 +241,7 @@ void NeuralSimulation::stop_shard_threads() {
         return;
     }
     
-    spdlog::info("Stopping shard processing threads...");
+    SPDLOG_INFO("Stopping shard processing threads...");
     threads_running_.store(false);
     
     for (auto& thread : shard_threads_) {
@@ -251,11 +251,11 @@ void NeuralSimulation::stop_shard_threads() {
     }
     
     shard_threads_.clear();
-    spdlog::info("All shard threads stopped");
+    SPDLOG_INFO("All shard threads stopped");
 }
 
 void NeuralSimulation::shard_worker_loop(uint32_t shard_idx) {
-    spdlog::debug("Shard {} worker thread started", shard_idx);
+    SPDLOG_DEBUG("Shard {} worker thread started", shard_idx);
     
     auto& shard = message_processor_.get_shard(shard_idx);
     uint32_t last_processed_timestamp = 0;
@@ -281,5 +281,5 @@ void NeuralSimulation::shard_worker_loop(uint32_t shard_idx) {
         }
     }
     
-    spdlog::debug("Shard {} worker thread stopped", shard_idx);
+    SPDLOG_DEBUG("Shard {} worker thread stopped", shard_idx);
 }
