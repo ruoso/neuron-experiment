@@ -68,6 +68,11 @@ private:
     float left_motor_suppressors_;
     float right_motor_activators_;
     float right_motor_suppressors_;
+    
+    // Survival tracking
+    uint32_t ticks_survived_;
+    float total_distance_moved_;
+    Vec2 last_position_;
 
 public:
     CreatureExperiment();

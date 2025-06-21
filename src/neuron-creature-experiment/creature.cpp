@@ -8,7 +8,7 @@ namespace neuron_creature_experiment {
 
 Creature::Creature(const Vec2& initial_position, float initial_orientation)
     : state_(), motor_output_(), vision_fov_(M_PI), vision_strips_(8), 
-      vision_range_(20.0f), last_satiation_spike_(0.0f), last_update_tick_(0) {
+      vision_range_(20.0f), last_satiation_spike_(0.0f), fruits_eaten_(0), last_update_tick_(0) {
     state_.position = initial_position;
     state_.orientation = initial_orientation;
     state_.velocity = Vec2(0.0f, 0.0f);
@@ -35,7 +35,8 @@ void Creature::update(uint32_t tick, World& world) {
     // Automatically eat any fruit in range
     if (world.consume_if_in_range()) {
         last_satiation_spike_ = 1.0f;
-        spdlog::info("Creature automatically consumed fruit");
+        fruits_eaten_++;
+        spdlog::info("Creature automatically consumed fruit (total: {})", fruits_eaten_);
     }
     
     // Debug: Log creature state periodically

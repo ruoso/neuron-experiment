@@ -1,2 +1,3 @@
 build
 neuron_experiment.log
+*.log

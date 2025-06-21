@@ -6,6 +6,7 @@
 #include <cmath>
 #include <thread>
 #include <algorithm>
+#include <fstream>
 
 namespace neuron_creature_experiment {
 
@@ -17,7 +18,8 @@ CreatureExperiment::CreatureExperiment()
       left_motor_feedback_(0.0f), right_motor_feedback_(0.0f),
       left_motor_sent_(false), right_motor_sent_(false), vision_activation_counter_(0),
       left_motor_activators_(0.0f), left_motor_suppressors_(0.0f),
-      right_motor_activators_(0.0f), right_motor_suppressors_(0.0f) {
+      right_motor_activators_(0.0f), right_motor_suppressors_(0.0f),
+      ticks_survived_(0), total_distance_moved_(0.0f), last_position_(50.0f, 50.0f) {
     
     initialize_logging();
     
@@ -247,6 +249,29 @@ void CreatureExperiment::update() {
         
         creature_->update(simulation_tick_, *world_);
         world_->step_simulation(simulation_tick_);
+        
+        // Update survival statistics
+        ticks_survived_ = simulation_tick_;
+        Vec2 current_pos = creature_->get_position();
+        total_distance_moved_ += (current_pos - last_position_).magnitude();
+        last_position_ = current_pos;
+        
+        // Check if creature died from hunger
+        float hunger = creature_->get_hunger();
+        if (hunger >= 10.0f) {
+            // Write survival summary and exit
+            std::ofstream summary_file("survival_summary.txt");
+            if (summary_file.is_open()) {
+                summary_file << ticks_survived_ << std::endl;
+                summary_file << total_distance_moved_ << std::endl;
+                summary_file << creature_->get_fruits_eaten() << std::endl;
+                summary_file.close();
+                spdlog::info("Creature died from hunger after {} ticks. Moved {:.2f} units, ate {} fruits. Summary written to survival_summary.txt", 
+                           ticks_survived_, total_distance_moved_, creature_->get_fruits_eaten());
+            }
+            running_ = false;
+            return;
+        }
         
         update_camera();
         

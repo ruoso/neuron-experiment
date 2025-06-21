@@ -26,6 +26,7 @@ public:
     Vec2 get_velocity() const { return state_.velocity; }
     float get_hunger() const { return state_.hunger; }
     float get_energy() const { return state_.energy; }
+    uint32_t get_fruits_eaten() const { return fruits_eaten_; }
     
     void set_position(const Vec2& position) { state_.position = position; }
     void set_orientation(float orientation) { state_.orientation = orientation; }
@@ -47,6 +48,7 @@ private:
     float vision_range_;
     
     float last_satiation_spike_;
+    uint32_t fruits_eaten_;
     uint32_t last_update_tick_;
 };
 
