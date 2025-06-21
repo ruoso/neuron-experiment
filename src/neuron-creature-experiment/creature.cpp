@@ -75,8 +75,8 @@ void Creature::update_locomotion(float dt) {
     float forward_x = std::cos(state_.orientation) * total_force;
     float forward_y = std::sin(state_.orientation) * total_force;
     
-    state_.velocity.x += forward_x * dt * 50.0f;
-    state_.velocity.y += forward_y * dt * 50.0f;
+    state_.velocity.x += forward_x * dt * 200.0f;
+    state_.velocity.y += forward_y * dt * 200.0f;
     
     state_.position = state_.position + state_.velocity * dt;
     state_.orientation += state_.angular_velocity * dt;
