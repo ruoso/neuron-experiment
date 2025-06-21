@@ -33,3 +33,8 @@ target_include_directories(creature-experiment PRIVATE
 )
 
 target_compile_options(creature-experiment PRIVATE ${SDL2_CFLAGS_OTHER})
+
+# Set output directory
+set_target_properties(creature-experiment PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)

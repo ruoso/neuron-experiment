@@ -28,6 +28,7 @@ add_subdirectory(src/libs/neuronlib)
 add_subdirectory(src/libs/experimentbase)
 add_subdirectory(src/neuron_grid_experiment)
 add_subdirectory(src/neuron-creature-experiment)
+add_subdirectory(src/genetic-algorithm)
 
 enable_testing()
 add_subdirectory(tests)
