@@ -11,7 +11,7 @@
 namespace genetic_algorithm {
 
 GeneticAlgorithm::GeneticAlgorithm(const GAParameters& params) 
-    : params_(params), rng_(params.random_seed) {
+    : params_(params), rng_(params.random_seed), current_generation_(0) {
     
     // Create output directory
     std::filesystem::create_directories(params_.output_directory);
@@ -28,9 +28,11 @@ GeneticAlgorithm::GeneticAlgorithm(const GAParameters& params)
 void GeneticAlgorithm::run() {
     std::cout << "Starting genetic algorithm evolution..." << std::endl;
     
-    initialize_population();
+    // Try to resume from existing results, otherwise start fresh
+    resume_from_results();
     
-    for (uint32_t generation = 0; generation < params_.num_generations; ++generation) {
+    for (uint32_t generation = current_generation_ + 1; generation < params_.num_generations; ++generation) {
+        current_generation_ = generation;
         std::cout << "\n=== Generation " << generation + 1 << " / " << params_.num_generations << " ===" << std::endl;
         
         evaluate_population();
@@ -153,17 +155,23 @@ void GeneticAlgorithm::evaluate_population() {
         std::cout << "  Individual " << (i + 1) << "/" << population_.size() << "... ";
         std::cout.flush();
         
-        float fitness = evaluate_individual(population_[i]);
+        float fitness = evaluate_individual(population_[i], current_generation_, i);
         population_[i].fitness = fitness;
         
         std::cout << "fitness = " << fitness << std::endl;
     }
 }
 
-float GeneticAlgorithm::evaluate_individual(Individual& individual) {
+float GeneticAlgorithm::evaluate_individual(Individual& individual, size_t generation, size_t individual_index) {
+    // Create results directory structure
+    std::stringstream dir_ss;
+    dir_ss << "results/generation_" << generation;
+    std::string gen_dir = dir_ss.str();
+    system(("mkdir -p " + gen_dir).c_str());
+    
     // Create unique output filename for this individual
     std::stringstream ss;
-    ss << params_.output_directory << "/individual_" << std::hash<std::string>{}(individual.layout_encoding) << ".txt";
+    ss << gen_dir << "/individual_" << individual_index << ".txt";
     std::string output_file = ss.str();
     
     // Run simulation
@@ -187,10 +195,25 @@ float GeneticAlgorithm::evaluate_individual(Individual& individual) {
     if (std::getline(file, line)) {
         individual.fruits_eaten = std::stoul(line);
     }
+    if (std::getline(file, line)) {
+        // Verify the layout encoding matches what we expected
+        if (line != individual.layout_encoding) {
+            std::cerr << "Warning: Layout encoding mismatch in file " << output_file << std::endl;
+            std::cerr << "Expected: " << individual.layout_encoding << std::endl;
+            std::cerr << "Found: " << line << std::endl;
+        }
+    }
     
     file.close();
     
-    return calculate_fitness(individual.ticks_survived, individual.distance_moved, individual.fruits_eaten);
+    float fitness = calculate_fitness(individual.ticks_survived, individual.distance_moved, individual.fruits_eaten);
+    
+    std::cout << "Individual evaluation - Ticks: " << individual.ticks_survived 
+              << ", Distance: " << individual.distance_moved 
+              << ", Fruits: " << individual.fruits_eaten 
+              << ", Fitness: " << fitness << std::endl;
+    
+    return fitness;
 }
 
 bool GeneticAlgorithm::run_simulation(const std::string& layout_encoding, const std::string& output_file) {
@@ -200,7 +223,7 @@ bool GeneticAlgorithm::run_simulation(const std::string& layout_encoding, const 
     if (pid == 0) {
         // Child process - run the simulation
         std::string executable = "build/bin/creature-experiment";
-        execl(executable.c_str(), "creature-experiment", layout_encoding.c_str(), nullptr);
+        execl(executable.c_str(), "creature-experiment", layout_encoding.c_str(), output_file.c_str(), nullptr);
         
         // If we reach here, exec failed
         std::cerr << "Failed to execute simulation" << std::endl;
@@ -209,8 +232,7 @@ bool GeneticAlgorithm::run_simulation(const std::string& layout_encoding, const 
         // Parent process - wait for completion
         int status;
         waitpid(pid, &status, 0);
-        
-        return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+        return true;
     } else {
         // Fork failed
         std::cerr << "Failed to fork simulation process" << std::endl;
@@ -219,18 +241,17 @@ bool GeneticAlgorithm::run_simulation(const std::string& layout_encoding, const 
 }
 
 float GeneticAlgorithm::calculate_fitness(uint32_t ticks_survived, float distance_moved, uint32_t fruits_eaten) {
-    // Multi-objective fitness function
-    // Prioritize survival time, but also reward movement and eating
+    // Simple weighted fitness with balanced contributions
     float fitness = 0.0f;
     
-    // Base survival fitness (logarithmic to avoid extreme values)
-    fitness += std::log(1.0f + ticks_survived) * 10.0f;
+    // Survival (scaled down to reduce dominance)
+    fitness += ticks_survived / 1000.0f;
     
-    // Movement bonus (exploration)
-    fitness += distance_moved * 0.1f;
+    // Movement (scaled up to encourage exploration)
+    fitness += distance_moved * 10.0f;
     
-    // Eating bonus (survival efficiency)
-    fitness += fruits_eaten * 50.0f;
+    // Fruits eaten (highest weight for successful foraging)
+    fitness += fruits_eaten * 30.0f;
     
     return fitness;
 }
@@ -339,6 +360,125 @@ void GeneticAlgorithm::save_best_individual(const Individual& best) {
     file.close();
     
     std::cout << "Best individual saved to " << filename << std::endl;
+}
+
+size_t GeneticAlgorithm::find_latest_generation() {
+    size_t latest_generation = 0;
+    bool found_any = false;
+    
+    if (!std::filesystem::exists("results")) {
+        return 0;
+    }
+    
+    for (const auto& entry : std::filesystem::directory_iterator("results")) {
+        if (entry.is_directory()) {
+            std::string dirname = entry.path().filename().string();
+            if (dirname.starts_with("generation_")) {
+                size_t gen = std::stoul(dirname.substr(11)); // Skip "generation_"
+                if (!found_any || gen > latest_generation) {
+                    latest_generation = gen;
+                    found_any = true;
+                }
+            }
+        }
+    }
+    
+    return found_any ? latest_generation : 0;
+}
+
+bool GeneticAlgorithm::load_population_from_generation(size_t generation) {
+    std::string gen_dir = "results/generation_" + std::to_string(generation);
+    
+    if (!std::filesystem::exists(gen_dir)) {
+        std::cerr << "Generation directory does not exist: " << gen_dir << std::endl;
+        return false;
+    }
+    
+    population_.clear();
+    
+    // Find all individual files in the generation directory
+    std::vector<std::filesystem::path> individual_files;
+    for (const auto& entry : std::filesystem::directory_iterator(gen_dir)) {
+        if (entry.is_regular_file() && entry.path().filename().string().starts_with("individual_")) {
+            individual_files.push_back(entry.path());
+        }
+    }
+    
+    // Sort by individual number
+    std::sort(individual_files.begin(), individual_files.end(), 
+              [](const std::filesystem::path& a, const std::filesystem::path& b) {
+                  std::string a_name = a.filename().string();
+                  std::string b_name = b.filename().string();
+                  size_t a_num = std::stoul(a_name.substr(11, a_name.size() - 15)); // Skip "individual_" and ".txt"
+                  size_t b_num = std::stoul(b_name.substr(11, b_name.size() - 15));
+                  return a_num < b_num;
+              });
+    
+    // Load each individual
+    for (const auto& file_path : individual_files) {
+        std::ifstream file(file_path);
+        if (!file.is_open()) {
+            std::cerr << "Failed to open file: " << file_path << std::endl;
+            continue;
+        }
+        
+        Individual individual;
+        std::string line;
+        
+        // Read survival data
+        if (std::getline(file, line)) {
+            individual.ticks_survived = std::stoul(line);
+        }
+        if (std::getline(file, line)) {
+            individual.distance_moved = std::stof(line);
+        }
+        if (std::getline(file, line)) {
+            individual.fruits_eaten = std::stoul(line);
+        }
+        if (std::getline(file, line)) {
+            individual.layout_encoding = line;
+        }
+        
+        // Calculate fitness
+        individual.fitness = calculate_fitness(individual.ticks_survived, individual.distance_moved, individual.fruits_eaten);
+        
+        population_.push_back(individual);
+        file.close();
+    }
+    
+    std::cout << "Loaded " << population_.size() << " individuals from generation " << generation << std::endl;
+    return !population_.empty();
+}
+
+void GeneticAlgorithm::resume_from_results() {
+    size_t latest_gen = find_latest_generation();
+    
+    if (latest_gen == 0 && !std::filesystem::exists("results/generation_0")) {
+        std::cout << "No previous results found. Starting fresh..." << std::endl;
+        initialize_population();
+        current_generation_ = 0;
+        return;
+    }
+    
+    std::cout << "Found results up to generation " << latest_gen << ". Resuming..." << std::endl;
+    
+    if (load_population_from_generation(latest_gen)) {
+        current_generation_ = latest_gen;
+        std::cout << "Successfully resumed from generation " << latest_gen << std::endl;
+        
+        // Show population summary
+        std::cout << "Population size: " << population_.size() << std::endl;
+        if (!population_.empty()) {
+            auto best_it = std::max_element(population_.begin(), population_.end(),
+                [](const Individual& a, const Individual& b) { return a.fitness < b.fitness; });
+            std::cout << "Best fitness in loaded generation: " << best_it->fitness << std::endl;
+        }
+    } else {
+        std::cerr << "Failed to load population from generation " << latest_gen << std::endl;
+        std::cout << "Starting fresh..." << std::endl;
+        initialize_population();
+        current_generation_ = 0;
+    }
 }
 
 } // namespace genetic_algorithm

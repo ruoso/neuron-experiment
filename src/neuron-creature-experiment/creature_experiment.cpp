@@ -13,9 +13,11 @@
 #include <cctype>
 #include <random>
 
+static constexpr int SENSOR_TICKS_PER_ACTIVATION = 1;
+
 namespace neuron_creature_experiment {
 
-CreatureExperiment::CreatureExperiment(const std::string& layout_encoding)
+CreatureExperiment::CreatureExperiment(const std::string& layout_encoding, const std::string& output_filename)
     : window_(nullptr), renderer_(nullptr), running_(false),
       camera_position_(50.0f, 50.0f), simulation_tick_(0),
       show_debug_info_(true), paused_(false), neural_mode_(true),
@@ -25,7 +27,8 @@ CreatureExperiment::CreatureExperiment(const std::string& layout_encoding)
       left_motor_activators_(0.0f), left_motor_suppressors_(0.0f),
       right_motor_activators_(0.0f), right_motor_suppressors_(0.0f),
       ticks_survived_(0), total_distance_moved_(0.0f), last_position_(50.0f, 50.0f),
-      layout_encoding_(layout_encoding) {
+      ticks_since_last_movement_(0), last_movement_position_(50.0f, 50.0f),
+      layout_encoding_(layout_encoding), output_filename_(output_filename) {
     
     initialize_logging();
     
@@ -155,10 +158,19 @@ void CreatureExperiment::initialize_world() {
     Vec2 creature_pos = creature_->get_position();
     for (int i = 0; i < 15; ++i) {
         // Generate random position around creature within a 120x120 area
-        float x = creature_pos.x + (rand() % 240 - 120); // -120 to +120 from creature
-        float y = creature_pos.y + (rand() % 240 - 120); // -120 to +120 from creature
+        // but at least 12 units away to prevent instant fruit access
+        Vec2 tree_pos;
+        int attempts = 0;
+        do {
+            float x = creature_pos.x + (rand() % 240 - 120); // -120 to +120 from creature
+            float y = creature_pos.y + (rand() % 240 - 120); // -120 to +120 from creature
+            tree_pos = Vec2(x, y);
+            attempts++;
+        } while (world_->distance(creature_pos, tree_pos) < 12.0f && attempts < 20);
         
-        world_->add_tree(Vec2(x, y));
+        if (attempts < 20) {
+            world_->add_tree(tree_pos);
+        }
         
         // Set varied initial age/maturity for trees
         auto& trees = const_cast<std::vector<Tree>&>(world_->get_trees());
@@ -294,6 +306,16 @@ void CreatureExperiment::update() {
         ticks_survived_ = simulation_tick_;
         Vec2 current_pos = creature_->get_position();
         total_distance_moved_ += (current_pos - last_position_).magnitude();
+        
+        // Check for movement (distance > 0.1 units to account for small floating point changes)
+        float movement_distance = (current_pos - last_movement_position_).magnitude();
+        if (movement_distance > 0.1f) {
+            ticks_since_last_movement_ = 0;
+            last_movement_position_ = current_pos;
+        } else {
+            ticks_since_last_movement_++;
+        }
+        
         last_position_ = current_pos;
         
         // Check if creature died from hunger
@@ -304,8 +326,15 @@ void CreatureExperiment::update() {
             return;
         }
         
+        // Check if creature hasn't moved in 500 ticks
+        if (ticks_since_last_movement_ >= 500) {
+            write_survival_summary("Creature hasn't moved in 500 ticks");
+            running_ = false;
+            return;
+        }
+        
         // Check if simulation reached maximum time limit
-        if (simulation_tick_ >= 3000) {
+        if (simulation_tick_ >= 2000) {
             write_survival_summary("Simulation reached maximum time limit");
             running_ = false;
             return;
@@ -661,7 +690,7 @@ void CreatureExperiment::generate_sensor_activations() {
     
     // 1. Vision sensor activations (192 sensors using dynamic layout) - only every 10 ticks
     vision_activation_counter_++;
-    if (vision_activation_counter_ >= 10) {
+    if (vision_activation_counter_ >= SENSOR_TICKS_PER_ACTIVATION) {
         vision_activation_counter_ = 0;
         
         const auto& vision_samples = sensor_data.vision_samples;
@@ -690,10 +719,7 @@ void CreatureExperiment::generate_sensor_activations() {
                 }
             }
         }
-    }
-    
-    // 2. Hunger sensor activation - only every 10 ticks (same as vision)
-    if (vision_activation_counter_ == 0) {
+
         float hunger = sensor_data.hunger_level;
         if (hunger > 0.01f) {
             uint8_t mode_bitmap = 0;
@@ -1017,12 +1043,19 @@ std::string CreatureExperiment::get_layout_filename_suffix() const {
 }
 
 void CreatureExperiment::write_survival_summary(const std::string& reason) {
-    std::string filename = "survival_summary_" + get_layout_filename_suffix() + ".txt";
+    std::string filename;
+    if (!output_filename_.empty()) {
+        filename = output_filename_;
+    } else {
+        filename = "survival_summary_" + get_layout_filename_suffix() + ".txt";
+    }
+    
     std::ofstream summary_file(filename);
     if (summary_file.is_open()) {
         summary_file << ticks_survived_ << std::endl;
         summary_file << total_distance_moved_ << std::endl;
         summary_file << creature_->get_fruits_eaten() << std::endl;
+        summary_file << layout_encoding_ << std::endl;
         summary_file.close();
         SPDLOG_INFO("{} after {} ticks. Moved {:.2f} units, ate {} fruits. Summary written to {}", 
                    reason, ticks_survived_, total_distance_moved_, creature_->get_fruits_eaten(), filename);
@@ -1100,6 +1133,7 @@ std::string generate_random_layout_encoding() {
 
 int main(int argc, char* argv[]) {
     std::string layout_encoding;
+    std::string output_filename;
     
     if (argc == 1) {
         // Generate random layout if no argument provided
@@ -1107,13 +1141,17 @@ int main(int argc, char* argv[]) {
         std::cout << "Using random layout: " << layout_encoding << std::endl;
     } else if (argc == 2) {
         layout_encoding = argv[1];
+    } else if (argc == 3) {
+        layout_encoding = argv[1];
+        output_filename = argv[2];
     } else {
-        std::cerr << "Usage: " << argv[0] << " [base64_layout_encoding]" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " [base64_layout_encoding] [output_filename]" << std::endl;
         std::cerr << "If no encoding is provided, a random layout will be generated." << std::endl;
+        std::cerr << "If no output filename is provided, default naming will be used." << std::endl;
         return 1;
     }
     
-    neuron_creature_experiment::CreatureExperiment app(layout_encoding);
+    neuron_creature_experiment::CreatureExperiment app(layout_encoding, output_filename);
     app.run();
     return 0;
 }

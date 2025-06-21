@@ -81,8 +81,8 @@ void Creature::update_locomotion(float dt) {
     state_.position = state_.position + state_.velocity * dt;
     state_.orientation += state_.angular_velocity * dt;
     
-    state_.velocity = state_.velocity * 0.85f;
-    state_.angular_velocity *= 0.80f;
+    state_.velocity = state_.velocity * 0.92f;
+    state_.angular_velocity *= 0.88f;
 }
 
 void Creature::update_internal_state(float dt) {

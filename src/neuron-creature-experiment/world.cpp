@@ -233,12 +233,23 @@ void World::update_trees(uint32_t tick) {
     // Spawn new trees to maintain stable population
     // Target: maintain around 15-20 trees by spawning more frequently around creature
     if (trees_.size() < config_.max_trees && uniform_dist_(rng_) < 0.05f) {
-        // Spawn within 40 units of creature position
-        float x = creature_state_.position.x + (uniform_dist_(rng_) - 0.5f) * 80.0f; // -40 to +40
-        float y = creature_state_.position.y + (uniform_dist_(rng_) - 0.5f) * 80.0f; // -40 to +40
-        add_tree(Vec2(x, y));
-        SPDLOG_INFO("Spawned new tree at ({:.2f}, {:.2f}) near creature ({:.2f}, {:.2f}). Total trees: {}", 
-                   x, y, creature_state_.position.x, creature_state_.position.y, trees_.size());
+        // Spawn within 40 units but at least 12 units away from creature
+        // (12 units = creature eat radius 5 + max fruit spawn distance 5 + safety buffer 2)
+        Vec2 spawn_pos;
+        int attempts = 0;
+        do {
+            float x = creature_state_.position.x + (uniform_dist_(rng_) - 0.5f) * 80.0f; // -40 to +40
+            float y = creature_state_.position.y + (uniform_dist_(rng_) - 0.5f) * 80.0f; // -40 to +40
+            spawn_pos = Vec2(x, y);
+            attempts++;
+        } while (distance(creature_state_.position, spawn_pos) < 12.0f && attempts < 10);
+        
+        if (attempts < 10) {
+            add_tree(spawn_pos);
+            SPDLOG_INFO("Spawned new tree at ({:.2f}, {:.2f}) near creature ({:.2f}, {:.2f}), distance: {:.2f}. Total trees: {}", 
+                       spawn_pos.x, spawn_pos.y, creature_state_.position.x, creature_state_.position.y, 
+                       distance(creature_state_.position, spawn_pos), trees_.size());
+        }
     }
 }
 

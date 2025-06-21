@@ -100,13 +100,16 @@ private:
     uint32_t ticks_survived_;
     float total_distance_moved_;
     Vec2 last_position_;
+    uint32_t ticks_since_last_movement_;
+    Vec2 last_movement_position_;
     
     // Sensor/Actuator layout
     SensorActuatorLayout layout_;
     std::string layout_encoding_;
+    std::string output_filename_;
 
 public:
-    CreatureExperiment(const std::string& layout_encoding);
+    CreatureExperiment(const std::string& layout_encoding, const std::string& output_filename = "");
     ~CreatureExperiment();
     
     bool initialize();

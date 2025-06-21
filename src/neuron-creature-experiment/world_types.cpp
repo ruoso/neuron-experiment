@@ -9,6 +9,19 @@ void Tree::update_color_for_state() {
     float total_lifetime = 55.0f;
     float maturity = std::min(1.0f, state.age / total_lifetime);
     
+    // Update radius based on lifecycle state
+    switch (state.lifecycle_state) {
+        case TreeLifecycleState::SEEDLING:
+            // Radius grows from 0 to full size (3.0) during seedling phase
+            radius = (state.state_timer / 10.0f) * 3.0f;
+            break;
+        case TreeLifecycleState::MATURE:
+        case TreeLifecycleState::FRUITING:
+        case TreeLifecycleState::DORMANT:
+            radius = 3.0f; // Full size
+            break;
+    }
+    
     // Linear interpolation: light green (0.6, 0.9, 0.4) -> dark green (0.1, 0.4, 0.1)
     float light_r = 0.6f, light_g = 0.9f, light_b = 0.4f;
     float dark_r = 0.1f, dark_g = 0.4f, dark_b = 0.1f;

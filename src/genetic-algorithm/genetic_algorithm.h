@@ -41,6 +41,7 @@ private:
     GAParameters params_;
     std::vector<Individual> population_;
     std::mt19937 rng_;
+    size_t current_generation_;
     
     // Genetic operators
     std::string generate_random_layout_encoding();
@@ -48,7 +49,7 @@ private:
     std::string crossover_layouts(const std::string& parent1, const std::string& parent2);
     
     // Simulation and fitness
-    float evaluate_individual(Individual& individual);
+    float evaluate_individual(Individual& individual, size_t generation, size_t individual_index);
     bool run_simulation(const std::string& layout_encoding, const std::string& output_file);
     float calculate_fitness(uint32_t ticks_survived, float distance_moved, uint32_t fruits_eaten);
     
@@ -67,6 +68,9 @@ public:
     ~GeneticAlgorithm() = default;
     
     void run();
+    void resume_from_results();
+    bool load_population_from_generation(size_t generation);
+    size_t find_latest_generation();
     void load_parameters_from_file(const std::string& filename);
     void save_parameters_to_file(const std::string& filename) const;
 };
