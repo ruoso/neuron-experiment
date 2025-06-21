@@ -69,7 +69,7 @@ private:
     
     static constexpr int WINDOW_WIDTH = 1200;
     static constexpr int WINDOW_HEIGHT = 800;
-    static constexpr float PIXELS_PER_UNIT = 8.0f;
+    static constexpr float PIXELS_PER_UNIT = 4.0f;
     static constexpr float CAMERA_FOLLOW_SPEED = 0.1f;
     
     Vec2 camera_position_;
@@ -128,6 +128,9 @@ private:
     // Layout encoding/decoding methods
     void decode_layout(const std::string& base64_encoding);
     std::string get_layout_filename_suffix() const;
+    
+    // Survival tracking
+    void write_survival_summary(const std::string& reason);
     
     void update_camera();
     Vec2 world_to_screen(const Vec2& world_pos) const;

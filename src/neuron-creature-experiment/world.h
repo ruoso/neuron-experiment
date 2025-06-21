@@ -20,8 +20,7 @@ public:
 
     void step_simulation(uint32_t tick);
     
-    Vec2 wrap_position(const Vec2& pos) const;
-    float wrap_distance(const Vec2& pos1, const Vec2& pos2) const;
+    float distance(const Vec2& pos1, const Vec2& pos2) const;
     
     void add_tree(const Vec2& position);
     void remove_tree(uint32_t tree_id);
@@ -35,7 +34,6 @@ public:
     bool consume_if_in_range();
     
     std::vector<VisionSample> get_visible_objects(const Vec2& position, float angle, float fov) const;
-    SensorData get_sensor_data() const;
     CreatureState get_creature_state() const;
     
     const std::vector<Tree>& get_trees() const { return trees_; }
@@ -83,7 +81,7 @@ private:
             
             Vec2 to_obj = obj.position - position;
             float obj_center_angle = std::atan2(to_obj.y, to_obj.x);
-            float distance = wrap_distance(position, obj.position);
+            float distance = this->distance(position, obj.position);
             
             // Normalize object angle to be relative to creature's facing direction
             float angle_diff = obj_center_angle - start_angle;

@@ -27,6 +27,7 @@ public:
     float get_hunger() const { return state_.hunger; }
     float get_energy() const { return state_.energy; }
     uint32_t get_fruits_eaten() const { return fruits_eaten_; }
+    float get_vision_fov() const { return vision_fov_; }
     
     void set_position(const Vec2& position) { state_.position = position; }
     void set_orientation(float orientation) { state_.orientation = orientation; }

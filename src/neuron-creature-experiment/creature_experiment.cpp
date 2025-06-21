@@ -152,9 +152,12 @@ void CreatureExperiment::initialize_world() {
     world_ = std::make_unique<World>(config);
     creature_ = std::make_unique<Creature>(Vec2(50.0f, 50.0f), 0.0f);
     
+    Vec2 creature_pos = creature_->get_position();
     for (int i = 0; i < 15; ++i) {
-        float x = 10.0f + (i % 5) * 20.0f + (rand() % 10 - 5);
-        float y = 10.0f + (i / 5) * 20.0f + (rand() % 10 - 5);
+        // Generate random position around creature within a 120x120 area
+        float x = creature_pos.x + (rand() % 240 - 120); // -120 to +120 from creature
+        float y = creature_pos.y + (rand() % 240 - 120); // -120 to +120 from creature
+        
         world_->add_tree(Vec2(x, y));
         
         // Set varied initial age/maturity for trees
@@ -296,17 +299,14 @@ void CreatureExperiment::update() {
         // Check if creature died from hunger
         float hunger = creature_->get_hunger();
         if (hunger >= 10.0f) {
-            // Write survival summary and exit
-            std::string filename = "survival_summary_" + get_layout_filename_suffix() + ".txt";
-            std::ofstream summary_file(filename);
-            if (summary_file.is_open()) {
-                summary_file << ticks_survived_ << std::endl;
-                summary_file << total_distance_moved_ << std::endl;
-                summary_file << creature_->get_fruits_eaten() << std::endl;
-                summary_file.close();
-                SPDLOG_INFO("Creature died from hunger after {} ticks. Moved {:.2f} units, ate {} fruits. Summary written to {}", 
-                           ticks_survived_, total_distance_moved_, creature_->get_fruits_eaten(), filename);
-            }
+            write_survival_summary("Creature died from hunger");
+            running_ = false;
+            return;
+        }
+        
+        // Check if simulation reached maximum time limit
+        if (simulation_tick_ >= 3000) {
+            write_survival_summary("Simulation reached maximum time limit");
             running_ = false;
             return;
         }
@@ -509,7 +509,7 @@ void CreatureExperiment::render_creature_vision() {
     
     Vec2 screen_pos = world_to_screen(creature_->get_position());
     float orientation = creature_->get_orientation();
-    float fov = M_PI / 3.0f;
+    float fov = creature_->get_vision_fov(); // Use creature's actual FOV
     float vision_range = 20.0f * PIXELS_PER_UNIT;
     
     SDL_SetRenderDrawColor(renderer_, 255, 255, 0, 50);
@@ -1014,6 +1014,21 @@ std::string CreatureExperiment::get_layout_filename_suffix() const {
         }
     }
     return suffix;
+}
+
+void CreatureExperiment::write_survival_summary(const std::string& reason) {
+    std::string filename = "survival_summary_" + get_layout_filename_suffix() + ".txt";
+    std::ofstream summary_file(filename);
+    if (summary_file.is_open()) {
+        summary_file << ticks_survived_ << std::endl;
+        summary_file << total_distance_moved_ << std::endl;
+        summary_file << creature_->get_fruits_eaten() << std::endl;
+        summary_file.close();
+        SPDLOG_INFO("{} after {} ticks. Moved {:.2f} units, ate {} fruits. Summary written to {}", 
+                   reason, ticks_survived_, total_distance_moved_, creature_->get_fruits_eaten(), filename);
+    } else {
+        SPDLOG_ERROR("Failed to write survival summary to {}", filename);
+    }
 }
 
 void CreatureExperiment::cleanup() {

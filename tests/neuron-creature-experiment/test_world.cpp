@@ -55,39 +55,35 @@ TEST_F(WorldTest, AddFruits) {
     EXPECT_EQ(fruit.maturity, 0.0f);
 }
 
-TEST_F(WorldTest, WorldWrapping) {
+TEST_F(WorldTest, InfiniteWorld) {
     World world(config_);
     
+    // Test that positions are not wrapped in infinite world
     Vec2 pos1(75.0f, 25.0f);
-    Vec2 wrapped = world.wrap_position(pos1);
-    EXPECT_EQ(wrapped.x, 25.0f);
-    EXPECT_EQ(wrapped.y, 25.0f);
+    world.add_tree(pos1);
+    EXPECT_EQ(world.get_trees()[0].position.x, 75.0f);
+    EXPECT_EQ(world.get_trees()[0].position.y, 25.0f);
     
     Vec2 pos2(-10.0f, 30.0f);
-    wrapped = world.wrap_position(pos2);
-    EXPECT_EQ(wrapped.x, 40.0f);
-    EXPECT_EQ(wrapped.y, 30.0f);
-    
-    Vec2 pos3(25.0f, -15.0f);
-    wrapped = world.wrap_position(pos3);
-    EXPECT_EQ(wrapped.x, 25.0f);
-    EXPECT_EQ(wrapped.y, 35.0f);
+    world.add_tree(pos2);
+    EXPECT_EQ(world.get_trees()[1].position.x, -10.0f);
+    EXPECT_EQ(world.get_trees()[1].position.y, 30.0f);
 }
 
-TEST_F(WorldTest, DistanceWrapping) {
+TEST_F(WorldTest, EuclideanDistance) {
     World world(config_);
     
     Vec2 pos1(5.0f, 25.0f);
     Vec2 pos2(45.0f, 25.0f);
     
-    float distance = world.wrap_distance(pos1, pos2);
-    EXPECT_NEAR(distance, 10.0f, 1e-6f);
+    float distance = world.distance(pos1, pos2);
+    EXPECT_NEAR(distance, 40.0f, 1e-6f);
     
     Vec2 pos3(25.0f, 5.0f);
     Vec2 pos4(25.0f, 45.0f);
     
-    distance = world.wrap_distance(pos3, pos4);
-    EXPECT_NEAR(distance, 10.0f, 1e-6f);
+    distance = world.distance(pos3, pos4);
+    EXPECT_NEAR(distance, 40.0f, 1e-6f);
 }
 
 TEST_F(WorldTest, SimulationStep) {

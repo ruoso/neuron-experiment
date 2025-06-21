@@ -20,23 +20,11 @@ void World::step_simulation(uint32_t tick) {
     update_creature(tick);
 }
 
-Vec2 World::wrap_position(const Vec2& pos) const {
-    Vec2 wrapped;
-    wrapped.x = std::fmod(pos.x + config_.width, config_.width);
-    if (wrapped.x < 0) wrapped.x += config_.width;
-    
-    wrapped.y = std::fmod(pos.y + config_.height, config_.height);
-    if (wrapped.y < 0) wrapped.y += config_.height;
-    
-    return wrapped;
-}
 
-float World::wrap_distance(const Vec2& pos1, const Vec2& pos2) const {
-    float dx = std::abs(pos1.x - pos2.x);
-    float dy = std::abs(pos1.y - pos2.y);
-    
-    dx = std::min(dx, config_.width - dx);
-    dy = std::min(dy, config_.height - dy);
+float World::distance(const Vec2& pos1, const Vec2& pos2) const {
+    // No wrapping - use standard Euclidean distance
+    float dx = pos1.x - pos2.x;
+    float dy = pos1.y - pos2.y;
     
     return std::sqrt(dx * dx + dy * dy);
 }
@@ -44,8 +32,7 @@ float World::wrap_distance(const Vec2& pos1, const Vec2& pos2) const {
 void World::add_tree(const Vec2& position) {
     if (trees_.size() >= config_.max_trees) return;
     
-    Vec2 wrapped_pos = wrap_position(position);
-    trees_.emplace_back(wrapped_pos, next_tree_id());
+    trees_.emplace_back(position, next_tree_id());
     trees_.back().update_color_for_state();
 }
 
@@ -58,8 +45,7 @@ void World::remove_tree(uint32_t tree_id) {
 void World::add_fruit(const Vec2& position, uint32_t parent_tree_id) {
     if (fruits_.size() >= config_.max_fruits) return;
     
-    Vec2 wrapped_pos = wrap_position(position);
-    fruits_.emplace_back(wrapped_pos, next_fruit_id(), parent_tree_id);
+    fruits_.emplace_back(position, next_fruit_id(), parent_tree_id);
     fruits_.back().update_color_for_maturity();
 }
 
@@ -70,7 +56,7 @@ void World::remove_fruit(uint32_t fruit_id) {
 }
 
 void World::set_creature_position(const Vec2& position) {
-    creature_state_.position = wrap_position(position);
+    creature_state_.position = position;
 }
 
 void World::set_creature_orientation(float orientation) {
@@ -94,9 +80,9 @@ bool World::consume_if_in_range() {
     for (auto& fruit : fruits_) {
         if (!fruit.available) continue;
         
-        float distance = wrap_distance(creature_state_.position, fruit.position);
+        float dist = distance(creature_state_.position, fruit.position);
         
-        if (distance <= config_.creature_eat_radius) {
+        if (dist <= config_.creature_eat_radius) {
             creature_state_.hunger = std::max(0.0f, creature_state_.hunger - fruit.satiation_value);
             creature_state_.energy = std::min(1.0f, creature_state_.energy + fruit.satiation_value * 0.1f);
             fruit.available = false;
@@ -132,20 +118,20 @@ std::vector<VisionSample> World::get_visible_objects(const Vec2& position, float
         int logged_fruits = 0;
         for (const auto& fruit : fruits_) {
             if (!fruit.available) continue;
-            float distance = wrap_distance(position, fruit.position);
-            if (distance < 20.0f && logged_fruits < 3) {
+            float obj_distance = distance(position, fruit.position);
+            if (obj_distance < 20.0f && logged_fruits < 3) {
                 SPDLOG_DEBUG("  Nearby fruit: pos=({:.2f}, {:.2f}), dist={:.2f}, maturity={:.2f}", 
-                             fruit.position.x, fruit.position.y, distance, fruit.maturity);
+                             fruit.position.x, fruit.position.y, obj_distance, fruit.maturity);
                 logged_fruits++;
             }
         }
         
         int logged_trees = 0;
         for (const auto& tree : trees_) {
-            float distance = wrap_distance(position, tree.position);
-            if (distance < 20.0f && logged_trees < 3) {
+            float tree_distance = distance(position, tree.position);
+            if (tree_distance < 20.0f && logged_trees < 3) {
                 SPDLOG_DEBUG("  Nearby tree: pos=({:.2f}, {:.2f}), dist={:.2f}, state={}", 
-                             tree.position.x, tree.position.y, distance, static_cast<int>(tree.state.lifecycle_state));
+                             tree.position.x, tree.position.y, tree_distance, static_cast<int>(tree.state.lifecycle_state));
                 logged_trees++;
             }
         }
@@ -184,19 +170,6 @@ std::vector<VisionSample> World::get_visible_objects(const Vec2& position, float
     }
     
     return samples;
-}
-
-SensorData World::get_sensor_data() const {
-    SensorData data;
-    data.vision_samples = get_visible_objects(creature_state_.position, 
-                                              creature_state_.orientation, 
-                                              M_PI / 3.0f);
-    data.forward_velocity = creature_state_.velocity.magnitude();
-    data.turn_rate = creature_state_.angular_velocity;
-    data.hunger_level = creature_state_.hunger;
-    data.last_satiation = 0.0f;
-    
-    return data;
 }
 
 CreatureState World::get_creature_state() const {
@@ -258,12 +231,14 @@ void World::update_trees(uint32_t tick) {
     }
     
     // Spawn new trees to maintain stable population
-    // Target: maintain around 15-20 trees by spawning more frequently
+    // Target: maintain around 15-20 trees by spawning more frequently around creature
     if (trees_.size() < config_.max_trees && uniform_dist_(rng_) < 0.05f) {
-        float x = uniform_dist_(rng_) * config_.width;
-        float y = uniform_dist_(rng_) * config_.height;
+        // Spawn within 40 units of creature position
+        float x = creature_state_.position.x + (uniform_dist_(rng_) - 0.5f) * 80.0f; // -40 to +40
+        float y = creature_state_.position.y + (uniform_dist_(rng_) - 0.5f) * 80.0f; // -40 to +40
         add_tree(Vec2(x, y));
-        SPDLOG_INFO("Spawned new tree at ({:.2f}, {:.2f}). Total trees: {}", x, y, trees_.size());
+        SPDLOG_INFO("Spawned new tree at ({:.2f}, {:.2f}) near creature ({:.2f}, {:.2f}). Total trees: {}", 
+                   x, y, creature_state_.position.x, creature_state_.position.y, trees_.size());
     }
 }
 
@@ -296,7 +271,6 @@ void World::update_fruits(uint32_t tick) {
 
 void World::update_creature(uint32_t tick) {
     creature_state_.position = creature_state_.position + creature_state_.velocity * config_.simulation_dt;
-    creature_state_.position = wrap_position(creature_state_.position);
     
     creature_state_.orientation += creature_state_.angular_velocity * config_.simulation_dt;
     

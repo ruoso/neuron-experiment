@@ -154,8 +154,14 @@ void ActivationShard::process_tick(Brain& brain, uint32_t current_timestamp, Sha
                     
                     // Neuron fires - check if it's an actuator
                     if (brain.neurons[neuron_index].is_actuator) {
-                        // Generate actuation event
-                        ActuationEvent actuation_event(brain.neurons[neuron_index].position, current_timestamp);
+                        // Generate actuation event with the actuator tag
+                        ActuationEvent actuation_event(brain.neurons[neuron_index].position, current_timestamp, brain.neurons[neuron_index].actuator_tag);
+                        SPDLOG_INFO("Neuron {} firing actuator at ({:.3f}, {:.3f}, {:.3f}) with tag {}", 
+                                 neuron_index, 
+                                 actuation_event.position.x, 
+                                 actuation_event.position.y, 
+                                 actuation_event.position.z, 
+                                 actuation_event.actuator_tag);
                         brain.actuation_queue.push(actuation_event);
                     }
                     

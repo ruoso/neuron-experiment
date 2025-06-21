@@ -7,7 +7,7 @@
 namespace neuron_creature_experiment {
 
 Creature::Creature(const Vec2& initial_position, float initial_orientation)
-    : state_(), motor_output_(), vision_fov_(M_PI), vision_strips_(8), 
+    : state_(), motor_output_(), vision_fov_(160.0f * M_PI / 180.0f), vision_strips_(8), 
       vision_range_(20.0f), last_satiation_spike_(0.0f), fruits_eaten_(0), last_update_tick_(0) {
     state_.position = initial_position;
     state_.orientation = initial_orientation;

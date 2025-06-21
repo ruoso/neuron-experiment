@@ -100,8 +100,11 @@ void NeuralSimulation::initialize_brain_with_layout(const std::vector<SensorPosi
                                                    const std::vector<ActuatorPosition>& actuator_positions) {
     SPDLOG_INFO("Initializing neural network with custom layout...");
     
-    // Create a simple 3D flow field with more internal processing space
-    FlowField3D flow_field(-1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f, 0.3f, 0.2f, 0.1f);
+    // Create a pure circular flow field (no input/output sections, no forward bias)
+    FlowField3D flow_field(-1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f, 
+                          0.0f, 0.0f, 0.1f,  // no input/output sections
+                          {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f},  // no flow in unused sections
+                          true, true);  // clockwise, normalized
     SPDLOG_DEBUG("Flow field created: bounds=({}, {}, {}) to ({}, {}, {})", 
                  flow_field.min_x, flow_field.min_y, flow_field.min_z,
                  flow_field.max_x, flow_field.max_y, flow_field.max_z);
