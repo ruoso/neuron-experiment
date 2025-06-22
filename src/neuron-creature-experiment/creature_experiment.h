@@ -108,12 +108,15 @@ private:
     std::string layout_encoding_;
     std::string output_filename_;
 
+
 public:
     CreatureExperiment(const std::string& layout_encoding, const std::string& output_filename = "");
     ~CreatureExperiment();
     
     bool initialize();
     void run();
+
+    unsigned int tick_limit = 2000; // Default maximum simulation time limit
 
 private:
     void initialize_logging();

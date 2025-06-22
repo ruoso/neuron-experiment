@@ -334,7 +334,7 @@ void CreatureExperiment::update() {
         }
         
         // Check if simulation reached maximum time limit
-        if (simulation_tick_ >= 2000) {
+        if (tick_limit != 0 && simulation_tick_ >= tick_limit) {
             write_survival_summary("Simulation reached maximum time limit");
             running_ = false;
             return;
@@ -1150,8 +1150,12 @@ int main(int argc, char* argv[]) {
         std::cerr << "If no output filename is provided, default naming will be used." << std::endl;
         return 1;
     }
+ 
     
     neuron_creature_experiment::CreatureExperiment app(layout_encoding, output_filename);
+    if (getenv("NEURON_CREATURE_EXPERIMENT_NO_TICK_LIMIT") != nullptr) {
+        app.tick_limit = 0;
+    }
     app.run();
     return 0;
 }
