@@ -318,6 +318,9 @@ void CreatureExperiment::update() {
         
         last_position_ = current_pos;
         
+        // Update creature trail
+        update_creature_trail();
+        
         // Check if creature died from hunger
         float hunger = creature_->get_hunger();
         if (hunger >= 10.0f) {
@@ -412,6 +415,7 @@ void CreatureExperiment::render() {
     render_background();
     render_trees();
     render_fruits();
+    render_creature_trail();
     render_creature();
     render_creature_vision();
     render_sensor_strips();
@@ -1077,6 +1081,54 @@ void CreatureExperiment::cleanup() {
     }
     
     SDL_Quit();
+}
+
+void CreatureExperiment::update_creature_trail() {
+    Vec2 current_pos = creature_->get_position();
+    
+    // Only add a new trail point if we've moved enough distance
+    if (creature_trail_.empty() || 
+        (current_pos - creature_trail_.back().position).magnitude() >= TRAIL_SAMPLE_DISTANCE) {
+        creature_trail_.emplace_back(current_pos, simulation_tick_);
+    }
+    
+    // Remove old trail points that have faded
+    creature_trail_.erase(
+        std::remove_if(creature_trail_.begin(), creature_trail_.end(),
+            [this](const TrailPoint& point) {
+                return (simulation_tick_ - point.tick_created) > TRAIL_FADE_TICKS;
+            }),
+        creature_trail_.end()
+    );
+}
+
+void CreatureExperiment::render_creature_trail() {
+    if (creature_trail_.size() < 2) return;
+    
+    // Render trail as connected line segments with fading alpha
+    for (size_t i = 1; i < creature_trail_.size(); ++i) {
+        const TrailPoint& prev = creature_trail_[i-1];
+        const TrailPoint& curr = creature_trail_[i];
+        
+        // Calculate alpha based on age (newer = more opaque)
+        uint32_t age = simulation_tick_ - curr.tick_created;
+        float alpha_factor = 1.0f - (static_cast<float>(age) / TRAIL_FADE_TICKS);
+        alpha_factor = std::max(0.0f, std::min(1.0f, alpha_factor));
+        
+        uint8_t alpha = static_cast<uint8_t>(alpha_factor * 100); // Max alpha of 100 for subtle trail
+        
+        // Convert world positions to screen positions
+        Vec2 screen_prev = world_to_screen(prev.position);
+        Vec2 screen_curr = world_to_screen(curr.position);
+        
+        // Set color to a subtle blue with fading alpha
+        SDL_SetRenderDrawColor(renderer_, 100, 150, 255, alpha);
+        
+        // Draw line segment
+        SDL_RenderDrawLine(renderer_, 
+                          static_cast<int>(screen_prev.x), static_cast<int>(screen_prev.y),
+                          static_cast<int>(screen_curr.x), static_cast<int>(screen_curr.y));
+    }
 }
 
 } // namespace neuron_creature_experiment

@@ -103,6 +103,16 @@ private:
     uint32_t ticks_since_last_movement_;
     Vec2 last_movement_position_;
     
+    // Trail system
+    struct TrailPoint {
+        Vec2 position;
+        uint32_t tick_created;
+        TrailPoint(const Vec2& pos, uint32_t tick) : position(pos), tick_created(tick) {}
+    };
+    std::vector<TrailPoint> creature_trail_;
+    static constexpr uint32_t TRAIL_FADE_TICKS = 2000;
+    static constexpr float TRAIL_SAMPLE_DISTANCE = 1.0f;
+    
     // Sensor/Actuator layout
     SensorActuatorLayout layout_;
     std::string layout_encoding_;
@@ -126,6 +136,10 @@ private:
     void handle_keypress(SDL_Keycode key, bool pressed);
     void update();
     void render();
+    
+    // Trail methods
+    void update_creature_trail();
+    void render_creature_trail();
     
     // Neural integration methods
     void generate_sensor_activations();
